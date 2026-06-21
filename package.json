@@ -1,0 +1,18 @@
+{
+  "name": "ai-learning-ecosystem",
+  "version": "0.1.0",
+  "description": "WebXR VR learning platform",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --host"
+  },
+  "dependencies": {
+    "firebase": "^10.14.1",
+    "three": "^0.169.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}

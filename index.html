@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Learning Ecosystem — VR</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/ui/styles.css" />
+</head>
+<body>
+  <canvas id="scene-canvas"></canvas>
+  <div class="bg-glow"></div>
+
+  <nav id="ui-nav" class="ui-overlay">
+    <div class="ui-brand">
+      <img src="/assets/ui/logo.svg" alt="logo" class="ui-logo" />
+      <span class="ui-brand-name">AI Learning Ecosystem</span>
+    </div>
+    <div class="nav-links">
+      <button data-route="mainPage" class="nav-btn active">Home</button>
+      <button data-route="contact" class="nav-btn">Contact</button>
+      <button data-route="login" class="nav-btn nav-guest">Login / Register</button>
+      <button data-route="vrSetup" class="nav-btn nav-authed">VR Setup</button>
+      <div class="profile-menu nav-authed" id="profile-menu">
+        <button type="button" class="profile-trigger" id="profile-trigger">
+          <span class="profile-avatar" id="profile-avatar">?</span>
+          <span class="profile-name" id="profile-name">Account</span>
+          <span class="profile-chevron" aria-hidden="true">▾</span>
+        </button>
+        <div class="profile-dropdown" id="profile-dropdown" hidden>
+          <button type="button" class="profile-dropdown-item" data-route="profile">View Profile</button>
+          <button type="button" class="profile-dropdown-item" data-route="devices">View Devices</button>
+          <div class="profile-dropdown-divider"></div>
+          <button type="button" class="profile-dropdown-item is-danger" id="nav-logout">Logout</button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <section id="ui-mainPage" class="ui-overlay ui-page is-active ui-hero">
+    <span class="ui-eyebrow">WebXR · Three.js</span>
+    <h1>Step into the lesson.</h1>
+    <p>A WebGL-powered VR classroom you can explore on desktop, mobile, or a headset —
+      no install required. Log in, attach your headset, and step inside.</p>
+    <div class="ui-hero-actions">
+      <button class="btn btn-primary" type="button" data-route="login">Get Started</button>
+      <button class="btn btn-ghost" type="button" data-route="contact">Contact Us</button>
+    </div>
+  </section>
+
+  <section id="ui-login" class="ui-overlay ui-page">
+    <div class="ui-form auth-card">
+      <div class="auth-toggle">
+        <button type="button" class="auth-toggle-btn is-active" data-auth-tab="login">Login</button>
+        <button type="button" class="auth-toggle-btn" data-auth-tab="register">Register</button>
+      </div>
+
+      <form id="login-form" class="auth-panel is-active">
+        <label for="login-email">Email or username</label>
+        <input id="login-email" type="text" name="identifier" placeholder="you@example.com" autocomplete="username" required />
+        <label for="login-password">Password</label>
+        <input id="login-password" type="password" name="password" placeholder="••••••••" autocomplete="current-password" required />
+        <p class="ui-form-foot ui-form-foot-right"><button type="button" class="link-btn" id="login-forgot">Forgot password?</button></p>
+        <button type="submit" class="btn btn-primary">Sign In</button>
+        <div class="ui-divider"><span>or</span></div>
+        <button type="button" id="login-google" class="btn btn-google">
+          <img src="/assets/ui/google-icon.svg" alt="" class="btn-icon" />
+          Continue with Google
+        </button>
+        <p class="status-text" id="login-status"></p>
+        <p class="ui-hint">Test credentials: <strong>admin</strong> / <strong>admin</strong></p>
+      </form>
+
+      <form id="register-form" class="auth-panel">
+        <label for="register-name">Name</label>
+        <input id="register-name" type="text" name="name" placeholder="Your name" autocomplete="name" required />
+        <label for="register-email">Email</label>
+        <input id="register-email" type="email" name="email" placeholder="you@example.com" autocomplete="email" required />
+        <label for="register-password">Password</label>
+        <input id="register-password" type="password" name="password" placeholder="••••••••" autocomplete="new-password" required minlength="6" />
+        <label for="register-confirm">Confirm password</label>
+        <input id="register-confirm" type="password" name="confirm" placeholder="••••••••" autocomplete="new-password" required minlength="6" />
+        <button type="submit" class="btn btn-primary">Create account</button>
+        <div class="ui-divider"><span>or</span></div>
+        <button type="button" id="register-google" class="btn btn-google">
+          <img src="/assets/ui/google-icon.svg" alt="" class="btn-icon" />
+          Sign up with Google
+        </button>
+        <p class="status-text" id="register-status"></p>
+      </form>
+    </div>
+  </section>
+
+  <section id="ui-vrSetup" class="ui-overlay ui-page">
+    <form id="vr-setup-form" class="ui-form" onsubmit="return false">
+      <span class="ui-eyebrow">Almost there</span>
+      <h2>Select your VR headset</h2>
+      <span class="ui-form-label">Headset</span>
+      <div class="vr-select" id="vr-headset-select">
+        <button type="button" class="vr-select-trigger">
+          <span class="vr-select-swatch" id="vr-select-trigger-swatch" style="background:#5b8cff; color:#5b8cff"></span>
+          <span class="vr-select-label">Meta Quest 2 / 3 / Pro</span>
+          <span class="vr-select-chevron" aria-hidden="true">▾</span>
+        </button>
+        <ul class="vr-select-options" role="listbox" hidden>
+          <li class="vr-select-option is-selected" role="option" tabindex="0" data-value="meta-quest" data-color="#5b8cff">
+            <span class="vr-select-swatch" style="background:#5b8cff; color:#5b8cff"></span>Meta Quest 2 / 3 / Pro
+          </li>
+          <li class="vr-select-option" role="option" tabindex="0" data-value="htc-vive" data-color="#22d3ee">
+            <span class="vr-select-swatch" style="background:#22d3ee; color:#22d3ee"></span>HTC Vive
+          </li>
+          <li class="vr-select-option" role="option" tabindex="0" data-value="valve-index" data-color="#a78bfa">
+            <span class="vr-select-swatch" style="background:#a78bfa; color:#a78bfa"></span>Valve Index
+          </li>
+          <li class="vr-select-option" role="option" tabindex="0" data-value="windows-mr" data-color="#34d399">
+            <span class="vr-select-swatch" style="background:#34d399; color:#34d399"></span>Windows Mixed Reality
+          </li>
+          <li class="vr-select-option" role="option" tabindex="0" data-value="other" data-color="#f472b6">
+            <span class="vr-select-swatch" style="background:#f472b6; color:#f472b6"></span>Other / Generic WebXR
+          </li>
+        </ul>
+      </div>
+      <button type="button" id="vr-attach-btn" class="btn btn-primary">Attach Headset</button>
+      <p class="status-text" id="vr-status"></p>
+    </form>
+  </section>
+
+  <section id="ui-profile" class="ui-overlay ui-page">
+    <div class="ui-form profile-form">
+      <span class="ui-eyebrow">Your account</span>
+      <h2>Profile</h2>
+
+      <div class="profile-upload">
+        <div class="profile-upload-avatar" id="profile-edit-avatar">?</div>
+        <div class="profile-upload-actions">
+          <label class="btn btn-ghost btn-small" for="profile-photo-input">Change photo</label>
+          <input type="file" id="profile-photo-input" accept="image/*" hidden />
+          <p class="ui-hint">JPG/PNG, auto-resized — stored on your profile doc.</p>
+        </div>
+      </div>
+
+      <label for="profile-name-input">Display name</label>
+      <input id="profile-name-input" type="text" placeholder="Your name" />
+
+      <label for="profile-about-input">About me</label>
+      <textarea id="profile-about-input" rows="3" placeholder="Tell us a little about yourself"></textarea>
+
+      <button type="button" id="profile-save-btn" class="btn btn-primary">Save changes</button>
+      <p class="status-text" id="profile-status"></p>
+
+      <div class="ui-divider"><span>email</span></div>
+      <p class="ui-hint">Current: <span id="profile-current-email">—</span></p>
+      <label for="profile-email-input">New email</label>
+      <input id="profile-email-input" type="email" placeholder="new@example.com" />
+      <button type="button" id="profile-email-btn" class="btn btn-ghost">Update email</button>
+      <p class="status-text" id="profile-email-status"></p>
+    </div>
+  </section>
+
+  <section id="ui-devices" class="ui-overlay ui-page">
+    <div class="ui-form devices-form">
+      <span class="ui-eyebrow">Connected devices</span>
+      <h2>Your devices</h2>
+
+      <div class="headset-preview" id="headset-preview">
+        <svg class="headset-preview-icon" id="headset-preview-icon" viewBox="0 0 64 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M8 28C8 15 16 8 32 8s24 7 24 20" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" />
+          <rect x="2" y="24" width="15" height="13" rx="5.5" fill="currentColor" />
+          <rect x="47" y="24" width="15" height="13" rx="5.5" fill="currentColor" />
+          <rect x="19" y="16" width="26" height="11" rx="4.5" fill="currentColor" opacity="0.35" />
+        </svg>
+        <div class="headset-preview-info">
+          <span class="headset-preview-label" id="headset-preview-label">No headset selected</span>
+          <span class="ui-hint">Currently selected headset</span>
+        </div>
+      </div>
+
+      <ul class="device-list" id="device-list"></ul>
+      <p class="ui-hint">Status reflects your live browser/headset session — open this
+        page while attached to see it update.</p>
+
+      <div class="ui-divider"><span>change headset</span></div>
+      <div class="vr-select" id="device-headset-select"></div>
+      <p class="status-text" id="device-headset-status"></p>
+    </div>
+  </section>
+
+  <section id="ui-contact" class="ui-overlay ui-page">
+    <form id="contact-form" class="ui-form">
+      <span class="ui-eyebrow">Get in touch</span>
+      <h2>Contact</h2>
+      <label for="contact-name">Name</label>
+      <input id="contact-name" type="text" name="name" placeholder="Your name" required />
+      <label for="contact-email">Email</label>
+      <input id="contact-email" type="email" name="email" placeholder="you@example.com" required />
+      <label for="contact-message">Message</label>
+      <textarea id="contact-message" name="message" rows="4" placeholder="How can we help?" required></textarea>
+      <button type="submit" class="btn btn-primary">Send Message</button>
+      <p class="status-text" id="contact-status"></p>
+    </form>
+  </section>
+
+  <script type="module" src="/scripts/core/app.js"></script>
+</body>
+</html>
