@@ -2,3 +2,9 @@
   base = "frontend"
   command = "npm run build"
   publish = "dist"
+
+[build.environment]
+  # Firebase web config is public client-side configuration by design
+  # (security comes from Firestore rules + authorized domains), so exempt
+  # these keys from Netlify's secrets scanner instead of failing the deploy.
+  SECRETS_SCAN_OMIT_KEYS = "VITE_FIREBASE_API_KEY,VITE_FIREBASE_AUTH_DOMAIN,VITE_FIREBASE_PROJECT_ID,VITE_FIREBASE_STORAGE_BUCKET,VITE_FIREBASE_MESSAGING_SENDER_ID,VITE_FIREBASE_APP_ID"
