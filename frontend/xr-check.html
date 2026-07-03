@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebXR Diagnostic</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #10131a; color: #e8ecf6; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.4rem; }
+    .check { padding: 0.7rem 1rem; border-radius: 10px; margin: 0.5rem 0; background: #1a2030; border: 1px solid #2a3350; }
+    .ok { border-color: #34d399; }
+    .fail { border-color: #f87171; }
+    .check b { display: block; margin-bottom: 0.2rem; }
+    .hint { color: #8fa3c8; font-size: 0.9rem; line-height: 1.5; }
+    button { font-size: 1rem; padding: 0.7rem 1.6rem; border-radius: 10px; border: none; background: #5b8cff; color: white; cursor: pointer; margin-top: 1rem; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    #log { white-space: pre-wrap; font-family: Consolas, monospace; font-size: 0.85rem; color: #fbbf24; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>WebXR Diagnostic</h1>
+  <p class="hint">This page checks each requirement for VR, in order. The first ❌ is your problem.</p>
+  <div id="checks"></div>
+  <button id="test-btn" disabled>Test: enter a minimal VR session</button>
+  <div id="log"></div>
+
+  <script>
+    const checksEl = document.getElementById("checks");
+    const btn = document.getElementById("test-btn");
+    const log = (m) => { document.getElementById("log").textContent += m + "\n"; };
+
+    function report(name, ok, hint) {
+      const div = document.createElement("div");
+      div.className = "check " + (ok ? "ok" : "fail");
+      div.innerHTML = `<b>${ok ? "✅" : "❌"} ${name}</b><span class="hint">${hint}</span>`;
+      checksEl.appendChild(div);
+      return ok;
+    }
+
+    async function run() {
+      const secure = report("Secure context", window.isSecureContext,
+        window.isSecureContext
+          ? `Origin ${location.origin} is trusted.`
+          : `You're on ${location.origin} — WebXR needs https:// or localhost. Open this page via localhost or an https tunnel.`);
+
+      const hasXR = report("navigator.xr exists", !!navigator.xr,
+        navigator.xr
+          ? "The browser has the WebXR API."
+          : "This browser doesn't expose WebXR at all. On PC use Chrome or Edge (not Firefox). If you're in Chrome/Edge and still see this, the browser was built without XR or it's disabled by policy.");
+
+      if (!hasXR) { return; }
+
+      let supported = false;
+      try {
+        supported = await navigator.xr.isSessionSupported("immersive-vr");
+      } catch (e) {
+        log("isSessionSupported threw: " + e);
+      }
+      report("immersive-vr supported", supported,
+        supported
+          ? "A VR runtime with a headset is available. The Test button below should put you in VR."
+          : `The browser has WebXR but no usable VR runtime/headset. On a PC this almost always means one of:<br>
+             • <b>Meta Quest Link app not installed</b> on the PC (get it from meta.com/quest/setup)<br>
+             • Link app installed but <b>not set as the active OpenXR runtime</b> — open the Meta Quest Link app → Settings → General → "Set Meta Quest Link as active OpenXR Runtime"<br>
+             • Headset <b>not currently in Link mode</b> — put it on, connect the cable / Air Link, and accept "Enable Link"<br>
+             • In the headset you must be seeing the Quest <b>Link white/grid home space</b> (not the normal Quest home) when you click the button on the PC.`);
+
+      btn.disabled = !supported;
+    }
+
+    btn.addEventListener("click", () => {
+      // Identical to the official immersive-web vr-barebones sample: no
+      // frills, so a failure here is the runtime's, not the app's.
+      navigator.xr.requestSession("immersive-vr").then((session) => {
+        log("SUCCESS — session started! Put the headset on. Ending in 8s...");
+        setTimeout(() => session.end(), 8000);
+      }, (err) => {
+        log("requestSession FAILED: " + err.name + " — " + err.message);
+      });
+    });
+
+    run();
+  </script>
+</body>
+</html>
