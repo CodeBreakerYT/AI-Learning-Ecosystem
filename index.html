@@ -22,6 +22,7 @@
       <button data-route="mainPage" class="nav-btn active">Home</button>
       <button data-route="contact" class="nav-btn">Contact</button>
       <button data-route="login" class="nav-btn nav-guest">Login / Register</button>
+      <button data-route="learn" class="nav-btn nav-authed">Learn</button>
       <button data-route="vrSetup" class="nav-btn nav-authed">VR Setup</button>
       <div class="profile-menu nav-authed" id="profile-menu">
         <button type="button" class="profile-trigger" id="profile-trigger">
@@ -90,6 +91,22 @@
         </button>
         <p class="status-text" id="register-status"></p>
       </form>
+    </div>
+  </section>
+
+  <section id="ui-learn" class="ui-overlay ui-page">
+    <div class="learn-panel">
+      <div class="learn-tabs">
+        <button type="button" class="learn-tab" data-subject="maths">➗ Maths</button>
+        <button type="button" class="learn-tab" data-subject="physics">🚀 Physics</button>
+        <button type="button" class="learn-tab" data-subject="chemistry">⚗️ Chemistry</button>
+      </div>
+      <h3 id="learn-title">Pick a subject to start its minigame</h3>
+      <p id="learn-desc">Each game runs in the 3D room behind this panel — playable with the mouse here, or with your controllers in VR.</p>
+      <div class="learn-actions">
+        <button type="button" id="learn-enter-vr" class="btn btn-primary btn-small">Enter VR 🥽</button>
+        <p class="status-text" id="learn-status"></p>
+      </div>
     </div>
   </section>
 

@@ -19,7 +19,7 @@ function readStoredUser() {
 // Lets testers exercise the login -> VR setup flow without a live Firebase project.
 export const DUMMY_CREDENTIALS = { username: "admin", password: "admin" };
 
-const PROTECTED_ROUTES = ["vrSetup", "profile", "devices"];
+const PROTECTED_ROUTES = ["learn", "vrSetup", "profile", "devices"];
 
 export function isAuthenticated() {
   return currentUser !== null;

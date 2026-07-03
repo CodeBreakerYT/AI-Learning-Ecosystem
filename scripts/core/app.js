@@ -31,6 +31,7 @@ async function start() {
       mainPage: () => import("../mainPage/mainPage.js"),
       login: () => import("../login/login.js"),
       contact: () => import("../contact/contact.js"),
+      learn: () => import("../learn/learn.js"),
       vrSetup: () => import("../vrSetup/vrSetup.js"),
       profile: () => import("../profile/profile.js"),
       devices: () => import("../devices/devices.js")
@@ -90,6 +91,7 @@ renderer.setAnimationLoop(() => {
   const delta = clock.getDelta();
   xrState.frameDelta = delta;
   demoCube.rotation.y += delta * 0.4;
+  xrState.updatables.forEach((fn) => fn(delta));
   moveRig(rig, camera, renderer.xr.getSession(), delta);
   renderer.render(scene, camera);
 });

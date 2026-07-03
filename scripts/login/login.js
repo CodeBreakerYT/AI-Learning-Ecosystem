@@ -37,7 +37,7 @@ async function handleLoginSubmit(event) {
 
   if (identifier === DUMMY_CREDENTIALS.username && password === DUMMY_CREDENTIALS.password) {
     login({ uid: "dummy-admin", email: "admin", provider: "test" });
-    window.location.hash = "vrSetup";
+    window.location.hash = "learn";
     return;
   }
 
@@ -45,7 +45,7 @@ async function handleLoginSubmit(event) {
   try {
     const user = await loginWithEmail(identifier, password);
     login({ uid: user.uid, email: user.email, provider: "password" });
-    window.location.hash = "vrSetup";
+    window.location.hash = "learn";
   } catch (err) {
     setStatus(loginStatusEl, err.message, true);
   }
@@ -56,7 +56,7 @@ async function handleGoogleLogin() {
   try {
     const user = await loginWithGoogle();
     login({ uid: user.uid, email: user.email, provider: "google" });
-    window.location.hash = "vrSetup";
+    window.location.hash = "learn";
   } catch (err) {
     setStatus(loginStatusEl, err.message, true);
   }
@@ -94,7 +94,7 @@ async function handleRegisterSubmit(event) {
   try {
     const user = await registerWithEmail(name, email, password);
     login({ uid: user.uid, email: user.email, provider: "password" });
-    window.location.hash = "vrSetup";
+    window.location.hash = "learn";
   } catch (err) {
     setStatus(registerStatusEl, err.message, true);
   }
@@ -105,7 +105,7 @@ async function handleGoogleRegister() {
   try {
     const user = await loginWithGoogle();
     login({ uid: user.uid, email: user.email, provider: "google" });
-    window.location.hash = "vrSetup";
+    window.location.hash = "learn";
   } catch (err) {
     setStatus(registerStatusEl, err.message, true);
   }
