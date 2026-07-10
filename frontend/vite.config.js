@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  base: "./",
+  base: "/AI-Learning-Ecosystem/",
   server: {
     host: true,
     port: 5173
