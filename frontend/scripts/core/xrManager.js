@@ -72,6 +72,9 @@ function setupEnvironment(scene) {
   return demoCube;
 }
 
+export const RAY_COLOR_IDLE = 0x5b8cff;
+export const RAY_COLOR_HOVER = 0x34d399;
+
 function setupControllers(renderer, rig) {
   const modelFactory = new XRControllerModelFactory();
   const rayGeometry = new THREE.BufferGeometry().setFromPoints([
@@ -81,7 +84,24 @@ function setupControllers(renderer, rig) {
 
   for (let i = 0; i < 2; i++) {
     const controller = renderer.xr.getController(i);
-    controller.add(new THREE.Line(rayGeometry, new THREE.LineBasicMaterial({ color: 0x5b8cff })));
+
+    const rayMaterial = new THREE.LineBasicMaterial({ color: RAY_COLOR_IDLE, transparent: true, opacity: 0.9 });
+    const ray = new THREE.Line(rayGeometry, rayMaterial);
+    ray.name = "ray";
+    controller.add(ray);
+
+    // Small dot that interaction.js slides along the ray to the hit point
+    // (or a fixed default distance when nothing's hit) — without it, aiming
+    // at small 3D UI is guesswork since there's no crosshair like on desktop.
+    const reticle = new THREE.Mesh(
+      new THREE.SphereGeometry(0.012, 12, 10),
+      new THREE.MeshBasicMaterial({ color: RAY_COLOR_IDLE, transparent: true, opacity: 0.9 })
+    );
+    reticle.position.z = -1.5;
+    controller.add(reticle);
+
+    controller.userData.rayMaterial = rayMaterial;
+    controller.userData.reticle = reticle;
     rig.add(controller);
 
     const grip = renderer.xr.getControllerGrip(i);

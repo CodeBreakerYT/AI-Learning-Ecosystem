@@ -49,7 +49,8 @@ function buildMenu() {
   heading.position.set(0, 2.35, -1.2);
   heading.userData.setText([
     { text: "Choose a subject", bold: true, size: 56 },
-    { text: "Point and pull the trigger (or click)", size: 28, color: "#8fa3c8" }
+    { text: "Point and pull the trigger (or click)", size: 28, color: "#8fa3c8" },
+    { text: "Room looks off? Squeeze either grip to recenter", size: 22, color: "#5b8cff" }
   ]);
   menu.add(heading);
 

@@ -108,21 +108,35 @@ const clock = new THREE.Clock();
 // underfoot, out of controller reach. Rather than depend on every runtime
 // being calibrated, sample the real headset height a few frames into each
 // VR session and, if it's clearly broken (not a plausible human height),
-// shift the rig to bring the room back to a normal eye level.
+// shift the rig to bring the room back to a normal eye level. Squeezing
+// either controller re-runs this on demand (forcing the correction even if
+// the reading looked "plausible"), as a manual escape hatch.
 const EXPECTED_EYE_HEIGHT = 1.6;
 const PLAUSIBLE_HEIGHT_RANGE = [1.0, 2.3];
 const worldPos = new THREE.Vector3();
-let vrHeightCalibrated = true;
-let vrCalibrationFramesLeft = 0;
+let pendingCalibration = null; // { forceFull: boolean } | null
+let calibrationFramesLeft = 0;
+
+function requestVRRecenter({ forceFull = false, frameDelay = 0 } = {}) {
+  pendingCalibration = { forceFull };
+  calibrationFramesLeft = frameDelay;
+}
 
 renderer.xr.addEventListener("sessionstart", () => {
-  vrHeightCalibrated = false;
-  vrCalibrationFramesLeft = 5; // let a few real XR frames render before sampling head height
+  // Let a few real XR frames render before sampling head height, so the
+  // very first reading reflects the actual headset pose, not the pre-XR default.
+  requestVRRecenter({ forceFull: false, frameDelay: 5 });
 });
 renderer.xr.addEventListener("sessionend", () => {
   rig.position.y = 0;
-  vrHeightCalibrated = true;
+  pendingCalibration = null;
 });
+
+for (let i = 0; i < 2; i++) {
+  renderer.xr.getController(i).addEventListener("squeezestart", () => {
+    requestVRRecenter({ forceFull: true });
+  });
+}
 
 renderer.setAnimationLoop(() => {
   const delta = clock.getDelta();
@@ -131,16 +145,17 @@ renderer.setAnimationLoop(() => {
   xrState.updatables.forEach((fn) => fn(delta));
   moveRig(rig, camera, renderer.xr.getSession(), delta);
 
-  if (!vrHeightCalibrated) {
-    if (vrCalibrationFramesLeft > 0) {
-      vrCalibrationFramesLeft -= 1;
+  if (pendingCalibration) {
+    if (calibrationFramesLeft > 0) {
+      calibrationFramesLeft -= 1;
     } else {
       camera.getWorldPosition(worldPos);
       const [min, max] = PLAUSIBLE_HEIGHT_RANGE;
-      if (worldPos.y < min || worldPos.y > max) {
+      const outOfRange = worldPos.y < min || worldPos.y > max;
+      if (pendingCalibration.forceFull || outOfRange) {
         rig.position.y += EXPECTED_EYE_HEIGHT - worldPos.y;
       }
-      vrHeightCalibrated = true;
+      pendingCalibration = null;
     }
   }
 
