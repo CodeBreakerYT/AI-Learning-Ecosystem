@@ -11,5 +11,9 @@ export const xrState = {
   frameDelta: 0,
   // Per-frame update callbacks (fn(delta)) that route modules register while
   // mounted — e.g. minigame physics — and must remove on unmount.
-  updatables: new Set()
+  updatables: new Set(),
+  // Set by learn.js while mounted so app.js's global squeeze handler can
+  // offer a grab attempt first, falling back to its own recenter action
+  // only when the player's hand was empty and nothing was in reach.
+  grabSystem: null
 };

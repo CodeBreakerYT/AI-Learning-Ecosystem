@@ -133,8 +133,12 @@ renderer.xr.addEventListener("sessionend", () => {
 });
 
 for (let i = 0; i < 2; i++) {
-  renderer.xr.getController(i).addEventListener("squeezestart", () => {
-    requestVRRecenter({ forceFull: true });
+  renderer.xr.getController(i).addEventListener("squeezestart", (event) => {
+    // Squeezing near a grabbable object grabs/releases it (learn.js owns
+    // this while mounted); an empty-handed squeeze anywhere else recenters
+    // the room instead — the same gesture does double duty contextually.
+    const handled = xrState.grabSystem?.trySqueeze(i, event.data);
+    if (!handled) requestVRRecenter({ forceFull: true });
   });
 }
 

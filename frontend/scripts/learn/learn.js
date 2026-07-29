@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { xrState } from "../core/xrState.js";
 import { connectVRSession } from "../core/xrSession.js";
 import { createInteractionManager } from "../core/interaction.js";
+import { createGrabSystem } from "../core/grabSystem.js";
 import { createTextPanel, createButton3D, disposeTree } from "../core/textPanel.js";
 import * as mathGame from "./games/mathGame.js";
 import * as physicsGame from "./games/physicsGame.js";
@@ -13,6 +14,13 @@ import * as chemistryGame from "./games/chemistryGame.js";
  * chosen from the HTML tabs (desktop/mobile) or from the floating 3D menu
  * (inside the headset, where the HTML overlay isn't visible). Both drive the
  * same game lifecycle.
+ *
+ * Menu navigation (subject cards, the back button) stays ray-based — point
+ * and select — since those are far/occasional actions. The games themselves
+ * use the grab system instead: their learning objects sit within arm's
+ * reach and you pick them up and physically place/throw them, so all
+ * content is attached to the player rig (not the static scene) and stays
+ * reachable no matter where the player walks.
  */
 
 const SUBJECTS = {
@@ -28,6 +36,8 @@ const statusEl = () => document.getElementById("learn-status");
 const enterVRBtn = () => document.getElementById("learn-enter-vr");
 
 let interaction = null;
+let grab = null;
+let roomRef = null; // the player rig — game/menu content is attached here so it moves with the player
 let sceneRef = null;
 let menuGroup = null;
 let backButton = null;
@@ -81,13 +91,14 @@ function syncTabs() {
 
 function stopGame() {
   if (!activeGame) return;
-  sceneRef.remove(activeGame.group);
+  grab.releaseAll(); // guard against a mid-squeeze hold at the moment of switching
+  roomRef.remove(activeGame.group);
   activeGame.dispose();
   activeGame = null;
   activeSubject = null;
   if (backButton) {
     interaction.remove(backButton);
-    sceneRef.remove(backButton);
+    roomRef.remove(backButton);
     disposeTree(backButton);
     backButton = null;
   }
@@ -100,7 +111,7 @@ function showMenu() {
   const title = titleEl();
   if (title) {
     title.textContent = "Pick a subject to start its minigame";
-    descEl().textContent = "Each game runs in the 3D room behind this panel — playable with the mouse here, or with your controllers in VR.";
+    descEl().textContent = "Each game runs in the 3D room behind this panel — playable with the mouse here, or with your hands in VR.";
   }
 }
 
@@ -111,13 +122,13 @@ function startGame(subjectId) {
 
   menuGroup.visible = false;
   activeSubject = subjectId;
-  activeGame = subject.module.createGame({ interaction });
-  sceneRef.add(activeGame.group);
+  activeGame = subject.module.createGame({ interaction, grab });
+  roomRef.add(activeGame.group);
 
   backButton = createButton3D("◀ Menu", { width: 0.4, height: 0.15, accent: "#f472b6", fontSize: 44 });
-  backButton.position.set(-1.9, 1.15, 0.6);
-  backButton.rotation.y = 0.5;
-  sceneRef.add(backButton);
+  backButton.position.set(-0.55, 1.3, 0.25);
+  backButton.rotation.y = 0.6;
+  roomRef.add(backButton);
   interaction.add(backButton, {
     onSelect: showMenu,
     onHoverStart: backButton.userData.onHoverStart,
@@ -138,7 +149,7 @@ async function handleEnterVR() {
   setStatus("Starting VR session…");
   try {
     await connectVRSession(xrState.renderer, {
-      onConnected: () => setStatus("In VR! Use the controller ray + trigger to play."),
+      onConnected: () => setStatus("In VR! Reach out and grab things — squeeze the grip to pick up, squeeze again to let go."),
       onEnded: () => {
         setStatus("VR session ended.");
         btn.disabled = false;
@@ -156,17 +167,21 @@ function handleTabClick(event) {
 
 export function mount(scene) {
   sceneRef = scene;
+  roomRef = xrState.rig;
 
   const demoCube = scene.getObjectByName("demoCube");
   if (demoCube) demoCube.visible = false;
 
   interaction = createInteractionManager({ renderer: xrState.renderer, camera: xrState.camera });
+  grab = createGrabSystem({ renderer: xrState.renderer, camera: xrState.camera });
+  xrState.grabSystem = grab;
 
   menuGroup = buildMenu();
-  scene.add(menuGroup);
+  roomRef.add(menuGroup);
 
   updateFn = (delta) => {
     interaction.update();
+    grab.update(delta);
     activeGame?.update(delta);
   };
   xrState.updatables.add(updateFn);
@@ -178,7 +193,7 @@ export function mount(scene) {
   showMenu();
 }
 
-export function unmount(scene) {
+export function unmount() {
   tabButtons().forEach((btn) => btn.removeEventListener("click", handleTabClick));
   enterVRBtn().removeEventListener("click", handleEnterVR);
 
@@ -186,14 +201,19 @@ export function unmount(scene) {
   updateFn = null;
 
   stopGame();
-  scene.remove(menuGroup);
+  roomRef.remove(menuGroup);
   disposeTree(menuGroup);
   menuGroup = null;
+
+  xrState.grabSystem = null;
+  grab.dispose();
+  grab = null;
 
   interaction.dispose();
   interaction = null;
 
-  const demoCube = scene.getObjectByName("demoCube");
+  const demoCube = sceneRef.getObjectByName("demoCube");
   if (demoCube) demoCube.visible = true;
   sceneRef = null;
+  roomRef = null;
 }

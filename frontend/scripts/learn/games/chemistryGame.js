@@ -1,11 +1,11 @@
 import * as THREE from "three";
-import { createTextPanel, createLabel, createButton3D, disposeTree } from "../../core/textPanel.js";
+import { createTextPanel, createLabel, disposeTree } from "../../core/textPanel.js";
 
 const ELEMENTS = {
-  H: { name: "Hydrogen", color: 0xf5f7fa, radius: 0.09 },
-  O: { name: "Oxygen", color: 0xf87171, radius: 0.13 },
-  C: { name: "Carbon", color: 0x4b5563, radius: 0.12 },
-  N: { name: "Nitrogen", color: 0x5b8cff, radius: 0.12 }
+  H: { name: "Hydrogen", color: 0xf5f7fa, radius: 0.05 },
+  O: { name: "Oxygen", color: 0xf87171, radius: 0.075 },
+  C: { name: "Carbon", color: 0x4b5563, radius: 0.07 },
+  N: { name: "Nitrogen", color: 0x5b8cff, radius: 0.07 }
 };
 
 // Each recipe: required atom counts, a display formula, a fun fact, and the
@@ -53,112 +53,117 @@ const RECIPES = [
   }
 ];
 
+const ZONE_RADIUS = 0.22;
+const RESPAWN_DELAY = 500;
+
 /**
- * Chemistry — "Molecule Builder". Dispensers offer H, O, C and N atoms; grab
- * the right mix for the target molecule and press REACT. A correct recipe
- * assembles a ball-and-stick model with its real geometry plus a fact;
- * a wrong mix tells you what's off.
+ * Chemistry — "Snap-Together Molecules". Pedestals within arm's reach keep
+ * offering H, O, C and N atoms; grab one and place it in the glowing
+ * assembly zone. Atoms you drop there stay and get counted live; get the
+ * exact mix the target molecule needs and the loose atoms snap into the
+ * real bonded shape, with its real geometry and a fact about it.
  */
-export function createGame({ interaction }) {
+export function createGame({ grab }) {
   const group = new THREE.Group();
   group.name = "chemistryGame";
 
   let recipeIndex = 0;
-  let collected = { H: 0, O: 0, C: 0, N: 0 };
   let solved = 0;
   let locked = false;
   const timers = new Set();
-  const interactives = [];
+  const zoneAtoms = []; // { symbol, mesh }
+  const pedestalAtoms = new Map(); // symbol -> currently-offered grabbable mesh
+  const worldPos = new THREE.Vector3();
 
-  // --- Panels ------------------------------------------------------------
-  const targetPanel = createTextPanel({ width: 1.6, height: 0.6, fontSize: 44 });
-  targetPanel.position.set(0, 2.2, -1.3);
+  // --- Panels ---------------------------------------------------------------
+  const targetPanel = createTextPanel({ width: 1.55, height: 0.56, fontSize: 40 });
+  targetPanel.position.set(0, 1.95, -0.85);
   group.add(targetPanel);
 
-  const benchPanel = createTextPanel({ width: 1.15, height: 0.42, fontSize: 36, border: "rgba(34, 211, 238, 0.8)" });
-  benchPanel.position.set(1.7, 2.15, -1.05);
-  benchPanel.rotation.y = -0.38;
+  const benchPanel = createTextPanel({ width: 1.05, height: 0.34, fontSize: 30, border: "rgba(34, 211, 238, 0.8)" });
+  benchPanel.position.set(1.15, 1.6, -0.6);
+  benchPanel.rotation.y = -0.4;
   group.add(benchPanel);
 
-  const feedbackPanel = createTextPanel({ width: 1.3, height: 0.42, fontSize: 34, border: "rgba(167, 139, 250, 0.8)" });
-  feedbackPanel.position.set(-1.7, 2.15, -1.05);
-  feedbackPanel.rotation.y = 0.38;
+  const feedbackPanel = createTextPanel({ width: 1.1, height: 0.34, fontSize: 28, border: "rgba(167, 139, 250, 0.8)" });
+  feedbackPanel.position.set(-1.15, 1.6, -0.6);
+  feedbackPanel.rotation.y = 0.4;
   group.add(feedbackPanel);
 
-  // --- Atom dispensers -----------------------------------------------------
-  const dispenserRoot = new THREE.Group();
-  dispenserRoot.position.set(0, 0, 0.2);
-  group.add(dispenserRoot);
-
-  Object.entries(ELEMENTS).forEach(([symbol, el], i) => {
-    const stand = new THREE.Group();
-    stand.position.set(-1.2 + i * 0.8, 0, 0);
-
-    const pedestal = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.16, 0.2, 0.75, 20),
-      new THREE.MeshStandardMaterial({ color: 0x232b40, roughness: 0.7 })
-    );
-    pedestal.position.y = 0.375;
-    stand.add(pedestal);
-
-    const atom = new THREE.Mesh(
-      new THREE.SphereGeometry(el.radius * 1.6, 28, 20),
-      new THREE.MeshStandardMaterial({ color: el.color, emissive: el.color, emissiveIntensity: 0.15, roughness: 0.35 })
-    );
-    atom.position.y = 1.05;
-    stand.add(atom);
-
-    const label = createLabel(symbol, { width: 0.3, height: 0.18, fontSize: 110 });
-    label.position.set(0, 1.38, 0);
-    stand.add(label);
-
-    const nameLabel = createLabel(el.name, { width: 0.55, height: 0.12, fontSize: 52, bold: false });
-    nameLabel.position.set(0, 0.82, 0.18);
-    stand.add(nameLabel);
-
-    dispenserRoot.add(stand);
-    stand.userData.atom = atom;
-    interaction.add(stand, {
-      onSelect: () => addAtom(symbol),
-      onHoverStart: () => !locked && atom.scale.setScalar(1.2),
-      onHoverEnd: () => atom.scale.setScalar(1)
-    });
-    interactives.push(stand);
-  });
-
-  // --- Reaction zone --------------------------------------------------------
-  const reactionZone = new THREE.Group();
-  reactionZone.position.set(0, 1.45, -1.1);
-  group.add(reactionZone);
+  // --- Assembly zone (where placed atoms bond) --------------------------------
+  const zone = new THREE.Group();
+  zone.position.set(0, 1.0, -0.55);
+  group.add(zone);
 
   const zoneRing = new THREE.Mesh(
-    new THREE.TorusGeometry(0.5, 0.015, 12, 48),
+    new THREE.TorusGeometry(ZONE_RADIUS, 0.015, 12, 48),
     new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x22d3ee, emissiveIntensity: 0.4 })
   );
-  reactionZone.add(zoneRing);
+  zoneRing.rotation.x = Math.PI / 2;
+  zone.add(zoneRing);
 
-  const collectedAtoms = new THREE.Group();
-  reactionZone.add(collectedAtoms);
+  const assembly = new THREE.Group(); // holds either loose zoneAtoms or the final bonded model
+  zone.add(assembly);
 
-  let moleculeModel = null;
-
-  // --- Buttons ------------------------------------------------------------
-  function addButton(text, x, accent, onSelect, width = 0.45) {
-    const btn = createButton3D(text, { width, height: 0.16, accent, fontSize: 46 });
-    btn.position.set(x, 1.02, 0.85);
-    btn.rotation.x = -0.25;
-    group.add(btn);
-    interaction.add(btn, {
-      onSelect,
-      onHoverStart: btn.userData.onHoverStart,
-      onHoverEnd: btn.userData.onHoverEnd
+  function flashZone(color) {
+    zoneRing.material.color.setHex(color);
+    zoneRing.material.emissiveIntensity = 1.2;
+    later(400, () => {
+      zoneRing.material.color.setHex(0x22d3ee);
+      zoneRing.material.emissiveIntensity = 0.4;
     });
-    interactives.push(btn);
   }
-  addButton("REACT ⚗", -0.35, "#34d399", react, 0.55);
-  addButton("CLEAR", 0.35, "#f87171", () => { if (!locked) resetBench("Bench cleared."); });
 
-  // --- Helpers -------------------------------------------------------------
+  // --- Element pedestals (infinite-supply grab points) -----------------------
+  const pedestalRoot = new THREE.Group();
+  pedestalRoot.position.set(0, 0, -0.05);
+  group.add(pedestalRoot);
+
+  const symbols = Object.keys(ELEMENTS);
+  const pedestals = symbols.map((symbol, i) => {
+    const stand = new THREE.Group();
+    stand.position.set(-0.45 + i * 0.3, 0.75, -0.3);
+    pedestalRoot.add(stand);
+
+    const post = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.035, 0.045, 0.3, 14),
+      new THREE.MeshStandardMaterial({ color: 0x232b40, roughness: 0.7 })
+    );
+    post.position.y = 0.15;
+    stand.add(post);
+
+    const nameLabel = createLabel(symbol, { width: 0.2, height: 0.12, fontSize: 90 });
+    nameLabel.position.set(0, -0.06, 0.05);
+    stand.add(nameLabel);
+
+    return stand;
+  });
+
+  function spawnPedestalAtom(symbol, stand) {
+    const el = ELEMENTS[symbol];
+    const atom = new THREE.Mesh(
+      new THREE.SphereGeometry(el.radius * 1.5, 24, 18),
+      new THREE.MeshStandardMaterial({ color: el.color, emissive: el.color, emissiveIntensity: 0.2, roughness: 0.35 })
+    );
+    atom.position.set(0, 0.32, 0);
+    stand.add(atom);
+    pedestalAtoms.set(symbol + stand.uuid, atom);
+
+    grab.add(atom, {
+      onGrab: () => {
+        pedestalAtoms.delete(symbol + stand.uuid);
+        atom.material.emissiveIntensity = 0.7;
+        later(RESPAWN_DELAY, () => spawnPedestalAtom(symbol, stand));
+      },
+      onRelease: () => handleAtomRelease(symbol, atom),
+      onHoverStart: () => atom.scale.setScalar(1.25),
+      onHoverEnd: () => atom.scale.setScalar(1)
+    });
+  }
+
+  symbols.forEach((symbol, i) => spawnPedestalAtom(symbol, pedestals[i]));
+
+  // --- Helpers ----------------------------------------------------------------
   const recipe = () => RECIPES[recipeIndex % RECIPES.length];
 
   function later(ms, fn) {
@@ -166,22 +171,27 @@ export function createGame({ interaction }) {
     timers.add(id);
   }
 
-  function countsText() {
-    const parts = Object.entries(collected).filter(([, n]) => n > 0).map(([s, n]) => `${s}×${n}`);
-    return parts.length ? parts.join("   ") : "empty";
+  function currentCounts() {
+    const counts = {};
+    for (const a of zoneAtoms) counts[a.symbol] = (counts[a.symbol] ?? 0) + 1;
+    return counts;
   }
 
   function refreshPanels() {
     const r = recipe();
-    const need = Object.entries(r.counts).map(([s, n]) => `${n} × ${ELEMENTS[s].name} (${s})`).join("  +  ");
+    const need = Object.entries(r.counts).map(([s, n]) => `${n} × ${ELEMENTS[s].name}`).join("  +  ");
+    const counts = currentCounts();
+    const have = Object.entries(r.counts)
+      .map(([s, n]) => `${s}: ${counts[s] ?? 0}/${n}`)
+      .join("   ");
     targetPanel.userData.setText([
-      { text: `Build:  ${r.formula} — ${r.name}`, bold: true, size: 52 },
-      { text: need, size: 32, color: "#8fa3c8" },
-      { text: `Molecules made: ${solved}`, size: 28, color: "#34d399" }
+      { text: `Build: ${r.formula} — ${r.name}`, bold: true, size: 40 },
+      { text: need, size: 26, color: "#8fa3c8" },
+      { text: `Molecules made: ${solved}`, size: 24, color: "#34d399" }
     ]);
     benchPanel.userData.setText([
-      { text: "On the bench", size: 28, color: "#8fa3c8" },
-      { text: countsText(), bold: true, size: 40, color: "#22d3ee" }
+      { text: "In the zone", size: 24, color: "#8fa3c8" },
+      { text: have || "empty", bold: true, size: 30, color: "#22d3ee" }
     ]);
   }
 
@@ -189,69 +199,87 @@ export function createGame({ interaction }) {
     feedbackPanel.userData.setText(lines);
   }
 
-  function layoutCollected() {
-    collectedAtoms.clear();
-    const all = Object.entries(collected).flatMap(([s, n]) => Array(n).fill(s));
-    all.forEach((symbol, i) => {
-      const el = ELEMENTS[symbol];
-      const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(el.radius, 20, 14),
-        new THREE.MeshStandardMaterial({ color: el.color, roughness: 0.4 })
-      );
-      const angle = (i / Math.max(all.length, 1)) * Math.PI * 2;
-      mesh.position.set(Math.cos(angle) * 0.3, Math.sin(angle) * 0.3, 0);
-      collectedAtoms.add(mesh);
+  function layoutZoneAtoms() {
+    zoneAtoms.forEach((a, i) => {
+      const angle = (i / Math.max(zoneAtoms.length, 1)) * Math.PI * 2;
+      const r = zoneAtoms.length > 1 ? 0.08 : 0;
+      a.mesh.position.set(Math.cos(angle) * r, Math.sin(angle) * r * 0.5, 0);
     });
   }
 
-  function addAtom(symbol) {
-    if (locked) return;
-    const total = Object.values(collected).reduce((a, b) => a + b, 0);
-    if (total >= 8) {
-      setFeedback([{ text: "Bench is full — REACT or CLEAR!", size: 30, color: "#fbbf24" }]);
+  function handleAtomRelease(symbol, atom) {
+    if (locked) {
+      atom.parent?.remove(atom);
+      atom.geometry.dispose();
+      atom.material.dispose();
       return;
     }
-    collected[symbol] += 1;
-    layoutCollected();
-    refreshPanels();
-    setFeedback([{ text: `Added ${ELEMENTS[symbol].name}`, size: 32 }]);
-  }
 
-  function resetBench(message) {
-    collected = { H: 0, O: 0, C: 0, N: 0 };
-    collectedAtoms.clear();
-    if (moleculeModel) {
-      reactionZone.remove(moleculeModel);
-      disposeTree(moleculeModel);
-      moleculeModel = null;
+    atom.getWorldPosition(worldPos);
+    const zoneWorld = zone.getWorldPosition(new THREE.Vector3());
+    const dist = worldPos.distanceTo(zoneWorld);
+
+    if (dist > ZONE_RADIUS) {
+      // Missed the zone — this atom is spent (the pedestal already has a
+      // fresh one on the way), just remove it rather than track a rack slot.
+      atom.geometry.dispose();
+      atom.material.dispose();
+      atom.parent?.remove(atom);
+      return;
     }
+
+    const r = recipe();
+    const wouldBe = (currentCounts()[symbol] ?? 0) + 1;
+    if (wouldBe > (r.counts[symbol] ?? 0)) {
+      flashZone(0xf87171);
+      setFeedback([
+        { text: `Too much ${ELEMENTS[symbol].name}!`, bold: true, size: 30, color: "#f87171" },
+        { text: `${r.formula} only needs ${r.counts[symbol] ?? 0}`, size: 24, color: "#8fa3c8" }
+      ]);
+      atom.geometry.dispose();
+      atom.material.dispose();
+      atom.parent?.remove(atom);
+      return;
+    }
+
+    assembly.add(atom);
+    atom.material.emissiveIntensity = 0.2;
+    zoneAtoms.push({ symbol, mesh: atom });
+    layoutZoneAtoms();
+    flashZone(0x34d399);
     refreshPanels();
-    if (message) setFeedback([{ text: message, size: 32 }]);
+
+    const matches = Object.keys(ELEMENTS).every((s) => (r.counts[s] ?? 0) === (currentCounts()[s] ?? 0));
+    if (matches) {
+      completeMolecule(r);
+    } else {
+      setFeedback([{ text: `Added ${ELEMENTS[symbol].name}`, size: 28 }]);
+    }
   }
 
   function buildMoleculeModel(r) {
     const model = new THREE.Group();
     const centerEl = ELEMENTS[r.center];
     const center = new THREE.Mesh(
-      new THREE.SphereGeometry(centerEl.radius, 28, 20),
+      new THREE.SphereGeometry(centerEl.radius, 24, 18),
       new THREE.MeshStandardMaterial({ color: centerEl.color, roughness: 0.35 })
     );
     model.add(center);
 
     const bondMaterial = new THREE.MeshStandardMaterial({ color: 0xaab4cc, roughness: 0.5 });
-    const bondLength = 0.34;
+    const bondLength = 0.18;
     for (const sat of r.satellites) {
       const el = ELEMENTS[sat.el];
       const dir = new THREE.Vector3(...sat.dir).normalize();
 
       const atom = new THREE.Mesh(
-        new THREE.SphereGeometry(el.radius, 28, 20),
+        new THREE.SphereGeometry(el.radius, 24, 18),
         new THREE.MeshStandardMaterial({ color: el.color, roughness: 0.35 })
       );
       atom.position.copy(dir).multiplyScalar(bondLength);
       model.add(atom);
 
-      const bond = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, bondLength, 10), bondMaterial);
+      const bond = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, bondLength, 10), bondMaterial);
       bond.position.copy(dir).multiplyScalar(bondLength / 2);
       bond.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
       model.add(bond);
@@ -259,47 +287,34 @@ export function createGame({ interaction }) {
     return model;
   }
 
-  function react() {
-    if (locked) return;
-    const r = recipe();
-    const matches = Object.keys(ELEMENTS).every((s) => (r.counts[s] ?? 0) === collected[s]);
-
-    if (!matches) {
-      const missing = Object.entries(r.counts)
-        .filter(([s, n]) => collected[s] < n)
-        .map(([s, n]) => `${n - collected[s]} more ${s}`);
-      const extra = Object.entries(collected)
-        .filter(([s, n]) => n > (r.counts[s] ?? 0))
-        .map(([s]) => `too much ${s}`);
-      setFeedback([
-        { text: "No reaction!", bold: true, size: 36, color: "#f87171" },
-        { text: [...missing, ...extra].join(", ") || "Check the recipe", size: 28, color: "#8fa3c8" }
-      ]);
-      return;
-    }
-
+  function completeMolecule(r) {
     locked = true;
-    collectedAtoms.clear();
-    moleculeModel = buildMoleculeModel(r);
-    reactionZone.add(moleculeModel);
+    zoneAtoms.forEach((a) => { assembly.remove(a.mesh); a.mesh.geometry.dispose(); a.mesh.material.dispose(); });
+    zoneAtoms.length = 0;
+
+    const model = buildMoleculeModel(r);
+    assembly.add(model);
     solved += 1;
     setFeedback([
-      { text: `You made ${r.formula}!`, bold: true, size: 40, color: "#34d399" },
-      { text: r.fact, size: 26 }
+      { text: `You built ${r.formula}!`, bold: true, size: 34, color: "#34d399" },
+      { text: r.fact, size: 22 }
     ]);
     refreshPanels();
 
     later(3200, () => {
+      assembly.remove(model);
+      disposeTree(model);
       recipeIndex += 1;
       locked = false;
-      resetBench(`Next up: ${recipe().formula}`);
+      refreshPanels();
+      setFeedback([{ text: `Next up: ${recipe().formula}`, size: 28 }]);
     });
   }
 
   refreshPanels();
   setFeedback([
-    { text: "Tap atoms to add them", size: 30 },
-    { text: "then press REACT ⚗", size: 30, color: "#8fa3c8" }
+    { text: "Grab atoms from the pedestals", size: 26 },
+    { text: "and place them in the ring", size: 26, color: "#8fa3c8" }
   ]);
 
   let elapsed = 0;
@@ -308,13 +323,13 @@ export function createGame({ interaction }) {
     group,
     update(delta) {
       elapsed += delta;
-      zoneRing.rotation.z += delta * 0.3;
-      if (moleculeModel) moleculeModel.rotation.y += delta * 0.8;
-      collectedAtoms.rotation.z = Math.sin(elapsed * 0.8) * 0.15;
+      zoneRing.rotation.z += delta * 0.4;
+      if (locked) assembly.rotation.y += delta * 0.8;
+      else assembly.rotation.y = 0;
     },
     dispose() {
       timers.forEach(clearTimeout);
-      interactives.forEach((obj) => interaction.remove(obj));
+      for (const [, atom] of pedestalAtoms) grab.remove(atom);
       disposeTree(group);
     }
   };
@@ -322,7 +337,7 @@ export function createGame({ interaction }) {
 
 export const meta = {
   id: "chemistry",
-  title: "Molecule Builder",
-  tagline: "Mix atoms, make molecules",
-  howTo: "The board shows a target molecule. Select atoms from the pedestals to add them to the reaction ring, then press REACT. Get the recipe right and watch the molecule assemble in 3D."
+  title: "Snap-Together Molecules",
+  tagline: "Build it atom by atom, with your hands",
+  howTo: "The board shows a target molecule. Grab atoms from the pedestals and place them into the glowing ring — get the exact mix and watch it snap into the real bonded shape."
 };
