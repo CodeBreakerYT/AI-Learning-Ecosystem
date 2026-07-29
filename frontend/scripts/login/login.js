@@ -55,6 +55,7 @@ async function handleGoogleLogin() {
   setStatus(loginStatusEl, "Opening Google sign-in...");
   try {
     const user = await loginWithGoogle();
+    if (!user) return; // fell back to a redirect; page is navigating to Google
     login({ uid: user.uid, email: user.email, provider: "google" });
     window.location.hash = "learn";
   } catch (err) {
@@ -104,6 +105,7 @@ async function handleGoogleRegister() {
   setStatus(registerStatusEl, "Opening Google sign-up...");
   try {
     const user = await loginWithGoogle();
+    if (!user) return; // fell back to a redirect; page is navigating to Google
     login({ uid: user.uid, email: user.email, provider: "google" });
     window.location.hash = "learn";
   } catch (err) {

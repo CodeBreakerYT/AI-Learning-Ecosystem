@@ -5,6 +5,8 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   sendPasswordResetEmail,
   signOut,
   updateProfile,
@@ -46,10 +48,36 @@ export async function loginWithEmail(email, password) {
   return credential.user;
 }
 
+// Codes seen when the popup itself can't open/complete (blocked by the
+// browser, closed before finishing, or unsupported in the current
+// environment) — worth a full-page-redirect retry rather than a hard fail.
+const POPUP_FALLBACK_CODES = new Set([
+  "auth/popup-blocked",
+  "auth/popup-closed-by-user",
+  "auth/cancelled-popup-request",
+  "auth/operation-not-supported-in-this-environment"
+]);
+
 export async function loginWithGoogle() {
   if (!auth) throw new Error(NOT_CONFIGURED_MESSAGE);
-  const credential = await signInWithPopup(auth, googleProvider);
-  return credential.user;
+  try {
+    const credential = await signInWithPopup(auth, googleProvider);
+    return credential.user;
+  } catch (err) {
+    if (!POPUP_FALLBACK_CODES.has(err.code)) throw err;
+    // Falls back to a full-page redirect, which navigates away immediately;
+    // the result is picked up by consumeGoogleRedirectResult() after reload.
+    await signInWithRedirect(auth, googleProvider);
+    return null;
+  }
+}
+
+// Call once at app startup to complete a sign-in that fell back to the
+// redirect flow above (the page will have just reloaded from Google).
+export async function consumeGoogleRedirectResult() {
+  if (!auth) return null;
+  const credential = await getRedirectResult(auth);
+  return credential?.user ?? null;
 }
 
 export async function resetPassword(email) {

@@ -8,11 +8,12 @@ import {
   guardRoute,
   getCurrentUser,
   onAuthChange,
+  login,
   logoutUser,
   waitForAuthReady,
   watchAuthState
 } from "./authState.js";
-import { logout as firebaseLogout } from "./firebase.js";
+import { logout as firebaseLogout, consumeGoogleRedirectResult } from "./firebase.js";
 import { getProfile, loadProfile, clearProfile, onProfileChange } from "./profileState.js";
 
 const canvas = document.getElementById("scene-canvas");
@@ -25,6 +26,19 @@ async function start() {
   // an already-signed-in user back to Login.
   await waitForAuthReady();
   watchAuthState();
+
+  // Picks up a sign-in that fell back to signInWithRedirect() (e.g. the
+  // Google popup was blocked) — the page has just reloaded coming back from
+  // Google, so land the now-authenticated user on the Learn page.
+  try {
+    const redirectedUser = await consumeGoogleRedirectResult();
+    if (redirectedUser) {
+      login({ uid: redirectedUser.uid, email: redirectedUser.email, provider: "google" });
+      window.location.hash = "learn";
+    }
+  } catch (err) {
+    console.warn("Google redirect sign-in failed:", err.message);
+  }
 
   createRouter(
     {
@@ -87,11 +101,48 @@ logoutBtn.addEventListener("click", () => {
 
 const clock = new THREE.Clock();
 
+// Different OpenXR runtimes (Meta's own vs. SteamVR acting as a bridge for
+// Quest Link) can report wildly different floor calibration for the
+// "local-floor" reference space if the runtime's room/floor setup was never
+// run — the whole scene then renders at head height near the ceiling or
+// underfoot, out of controller reach. Rather than depend on every runtime
+// being calibrated, sample the real headset height a few frames into each
+// VR session and, if it's clearly broken (not a plausible human height),
+// shift the rig to bring the room back to a normal eye level.
+const EXPECTED_EYE_HEIGHT = 1.6;
+const PLAUSIBLE_HEIGHT_RANGE = [1.0, 2.3];
+const worldPos = new THREE.Vector3();
+let vrHeightCalibrated = true;
+let vrCalibrationFramesLeft = 0;
+
+renderer.xr.addEventListener("sessionstart", () => {
+  vrHeightCalibrated = false;
+  vrCalibrationFramesLeft = 5; // let a few real XR frames render before sampling head height
+});
+renderer.xr.addEventListener("sessionend", () => {
+  rig.position.y = 0;
+  vrHeightCalibrated = true;
+});
+
 renderer.setAnimationLoop(() => {
   const delta = clock.getDelta();
   xrState.frameDelta = delta;
   demoCube.rotation.y += delta * 0.4;
   xrState.updatables.forEach((fn) => fn(delta));
   moveRig(rig, camera, renderer.xr.getSession(), delta);
+
+  if (!vrHeightCalibrated) {
+    if (vrCalibrationFramesLeft > 0) {
+      vrCalibrationFramesLeft -= 1;
+    } else {
+      camera.getWorldPosition(worldPos);
+      const [min, max] = PLAUSIBLE_HEIGHT_RANGE;
+      if (worldPos.y < min || worldPos.y > max) {
+        rig.position.y += EXPECTED_EYE_HEIGHT - worldPos.y;
+      }
+      vrHeightCalibrated = true;
+    }
+  }
+
   renderer.render(scene, camera);
 });
