@@ -56,7 +56,7 @@ function buildMenu() {
   menu.name = "learnMenu";
 
   const heading = createTextPanel({ width: 2.2, height: 0.42, fontSize: 48 });
-  heading.position.set(0, 2.35, -1.2);
+  heading.position.set(0, 2.4, -2.0);
   heading.userData.setText([
     { text: "Choose a subject", bold: true, size: 56 },
     { text: "Point and pull the trigger (or click)", size: 28, color: "#8fa3c8" },
@@ -66,7 +66,7 @@ function buildMenu() {
 
   Object.entries(SUBJECTS).forEach(([id, { module, accent }], i) => {
     const card = createTextPanel({ width: 0.95, height: 0.75, fontSize: 34, border: accent });
-    card.position.set((i - 1) * 1.15, 1.55, -1.1);
+    card.position.set((i - 1) * 1.3, 1.6, -1.9);
     card.rotation.y = (1 - i) * 0.22;
     card.userData.setText([
       { text: id.charAt(0).toUpperCase() + id.slice(1), bold: true, size: 52, color: accent },
@@ -126,8 +126,11 @@ function startGame(subjectId) {
   roomRef.add(activeGame.group);
 
   backButton = createButton3D("◀ Menu", { width: 0.4, height: 0.15, accent: "#f472b6", fontSize: 44 });
-  backButton.position.set(-0.55, 1.3, 0.25);
-  backButton.rotation.y = 0.6;
+  // In front of the camera (negative z), same forward arc as the rest of the
+  // room's content — it used to sit behind the camera (+z), off to the side
+  // of everything else the player could actually see.
+  backButton.position.set(-1.0, 1.3, -0.5);
+  backButton.rotation.y = 0.5;
   roomRef.add(backButton);
   interaction.add(backButton, {
     onSelect: showMenu,

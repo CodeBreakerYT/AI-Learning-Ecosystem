@@ -77,16 +77,16 @@ export function createGame({ grab }) {
 
   // --- Panels ---------------------------------------------------------------
   const targetPanel = createTextPanel({ width: 1.55, height: 0.56, fontSize: 40 });
-  targetPanel.position.set(0, 1.95, -0.85);
+  targetPanel.position.set(0, 2.0, -2.0);
   group.add(targetPanel);
 
   const benchPanel = createTextPanel({ width: 1.05, height: 0.34, fontSize: 30, border: "rgba(34, 211, 238, 0.8)" });
-  benchPanel.position.set(1.15, 1.6, -0.6);
+  benchPanel.position.set(1.35, 1.6, -1.9);
   benchPanel.rotation.y = -0.4;
   group.add(benchPanel);
 
   const feedbackPanel = createTextPanel({ width: 1.1, height: 0.34, fontSize: 28, border: "rgba(167, 139, 250, 0.8)" });
-  feedbackPanel.position.set(-1.15, 1.6, -0.6);
+  feedbackPanel.position.set(-1.35, 1.6, -1.9);
   feedbackPanel.rotation.y = 0.4;
   group.add(feedbackPanel);
 

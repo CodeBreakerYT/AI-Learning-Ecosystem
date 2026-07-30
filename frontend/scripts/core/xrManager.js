@@ -57,6 +57,7 @@ function setupEnvironment(scene) {
   scene.add(floor);
 
   const grid = new THREE.GridHelper(20, 40, 0x3a4358, 0x252b39);
+  grid.name = "grid";
   scene.add(grid);
 
   // Placeholder for real lesson content — swap for a GLTF loaded from

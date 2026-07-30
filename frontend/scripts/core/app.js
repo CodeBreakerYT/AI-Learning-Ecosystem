@@ -55,6 +55,7 @@ async function start() {
       login: () => import("../login/login.js"),
       contact: () => import("../contact/contact.js"),
       learn: () => import("../learn/learn.js"),
+      world: () => import("../world/world.js"),
       vrSetup: () => import("../vrSetup/vrSetup.js"),
       profile: () => import("../profile/profile.js"),
       devices: () => import("../devices/devices.js")

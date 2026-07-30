@@ -78,12 +78,12 @@ export function createGame({ grab }) {
 
   // --- UI panels ------------------------------------------------------------
   const readout = createTextPanel({ width: 1.5, height: 0.56, fontSize: 36 });
-  readout.position.set(0, 1.9, -0.6);
+  readout.position.set(0, 2.0, -2.0);
   group.add(readout);
 
   const lessonPanel = createTextPanel({ width: 1.2, height: 0.44, fontSize: 26, border: "rgba(167, 139, 250, 0.8)" });
-  lessonPanel.position.set(-1.35, 1.55, -0.4);
-  lessonPanel.rotation.y = 0.45;
+  lessonPanel.position.set(-1.35, 1.55, -1.9);
+  lessonPanel.rotation.y = 0.4;
   lessonPanel.userData.setText([
     { text: "Projectile motion", bold: true, size: 32, color: "#a78bfa" },
     { text: "Range = v² · sin(2θ) / g", size: 30 },
@@ -92,8 +92,8 @@ export function createGame({ grab }) {
   group.add(lessonPanel);
 
   const feedbackPanel = createTextPanel({ width: 1.2, height: 0.38, fontSize: 30, border: "rgba(52, 211, 153, 0.8)" });
-  feedbackPanel.position.set(1.35, 1.55, -0.4);
-  feedbackPanel.rotation.y = -0.45;
+  feedbackPanel.position.set(1.35, 1.55, -1.9);
+  feedbackPanel.rotation.y = -0.4;
   group.add(feedbackPanel);
 
   function updateReadout(throwInfo) {

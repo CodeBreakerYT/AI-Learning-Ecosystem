@@ -781,8 +781,9 @@ body.xr-presenting .ui-overlay {
 /* ---------- Learn page ---------- */
 
 /* Docked to the bottom so the 3D room stays visible and clickable while a
-   minigame is running; only the card itself captures pointer events. */
-#ui-learn {
+   minigame (or the World) is running; only the card itself captures pointer events. */
+#ui-learn,
+#ui-world {
   top: auto;
   left: 50%;
   bottom: 1.25rem;
@@ -790,7 +791,8 @@ body.xr-presenting .ui-overlay {
   width: min(94vw, 620px);
 }
 
-#ui-learn.is-active {
+#ui-learn.is-active,
+#ui-world.is-active {
   transform: translate(-50%, 0);
 }
 

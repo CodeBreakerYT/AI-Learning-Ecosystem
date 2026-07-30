@@ -24,17 +24,17 @@ export function createGame({ grab }) {
   const localPos = new THREE.Vector3();
 
   const questionPanel = createTextPanel({ width: 1.5, height: 0.5, fontSize: 54 });
-  questionPanel.position.set(0, 1.95, -0.85);
+  questionPanel.position.set(0, 2.0, -2.0);
   group.add(questionPanel);
 
   const scorePanel = createTextPanel({ width: 0.75, height: 0.3, fontSize: 34, border: "rgba(52, 211, 153, 0.8)" });
-  scorePanel.position.set(1.15, 1.6, -0.65);
-  scorePanel.rotation.y = -0.45;
+  scorePanel.position.set(1.35, 1.6, -1.9);
+  scorePanel.rotation.y = -0.4;
   group.add(scorePanel);
 
   const feedbackPanel = createTextPanel({ width: 1.1, height: 0.28, fontSize: 32, border: "rgba(167, 139, 250, 0.8)" });
-  feedbackPanel.position.set(-1.15, 1.6, -0.65);
-  feedbackPanel.rotation.y = 0.45;
+  feedbackPanel.position.set(-1.35, 1.6, -1.9);
+  feedbackPanel.rotation.y = 0.4;
   group.add(feedbackPanel);
 
   // --- Basket (the goal you toss blocks into) --------------------------------
