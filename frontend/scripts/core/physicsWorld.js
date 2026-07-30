@@ -17,12 +17,36 @@ export function createPhysicsWorld() {
     restitution: 0.3
   });
 
+  // Named materials so different props actually feel different against the
+  // ground instead of sharing one contact response: crates thud and stay
+  // put, barrels roll, a bouncy ball actually bounces.
+  const materials = {
+    default: defaultMaterial,
+    ground: new CANNON.Material("ground"),
+    crate: new CANNON.Material("crate"),
+    barrel: new CANNON.Material("barrel"),
+    ball: new CANNON.Material("ball")
+  };
+
+  world.addContactMaterial(new CANNON.ContactMaterial(materials.ground, materials.crate, {
+    friction: 0.6,
+    restitution: 0.1
+  }));
+  world.addContactMaterial(new CANNON.ContactMaterial(materials.ground, materials.barrel, {
+    friction: 0.12,
+    restitution: 0.2
+  }));
+  world.addContactMaterial(new CANNON.ContactMaterial(materials.ground, materials.ball, {
+    friction: 0.3,
+    restitution: 0.65
+  }));
+
   const bodies = new Map(); // mesh -> { body, sync }
   const FIXED_STEP = 1 / 60;
   const MAX_SUBSTEPS = 5;
 
   function addGroundPlane(y = 0) {
-    const body = new CANNON.Body({ type: CANNON.Body.STATIC, material: defaultMaterial });
+    const body = new CANNON.Body({ type: CANNON.Body.STATIC, material: materials.ground });
     body.addShape(new CANNON.Plane());
     body.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
     body.position.set(0, y, 0);
@@ -63,5 +87,5 @@ export function createPhysicsWorld() {
     bodies.clear();
   }
 
-  return { world, defaultMaterial, addGroundPlane, addBody, setSync, removeBody, step, dispose };
+  return { world, defaultMaterial, materials, addGroundPlane, addBody, setSync, removeBody, step, dispose };
 }

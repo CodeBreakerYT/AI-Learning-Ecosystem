@@ -15,6 +15,19 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    assetsDir: "assets"
+    assetsDir: "assets",
+    rollupOptions: {
+      output: {
+        // three and firebase dominate the bundle size — splitting them into
+        // their own vendor chunks keeps the app code cacheable separately
+        // and avoids one ~1MB catch-all chunk.
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (id.includes("three")) return "vendor-three";
+          if (id.includes("firebase") || id.includes("@firebase")) return "vendor-firebase";
+          return undefined;
+        }
+      }
+    }
   }
 });
