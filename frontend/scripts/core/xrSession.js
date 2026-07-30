@@ -8,12 +8,23 @@ export async function connectVRSession(renderer, { onConnected, onEnded, onWaiti
     throw new Error("WebXR isn't available in this browser.");
   }
 
-  // Double-tap guard: if a session is already live, hand it back instead of
-  // asking the browser for a second one (which throws InvalidStateError).
+  // Double-tap guard: if a session is already live and actually presenting,
+  // hand it back instead of asking the browser for a second one (which
+  // throws InvalidStateError). Checking isPresenting (not just truthiness)
+  // matters: three.js's WebXRManager records the session reference the
+  // instant setSession() is called, before it even requests a reference
+  // space — so a session that failed partway through a previous attempt
+  // (e.g. the reference-space request was rejected) leaves getSession()
+  // returning a dead, non-presenting session forever. Treating that as
+  // "already connected" would silently no-op every future attempt until a
+  // full page reload — exactly the "stops working after one failure" bug.
   const existing = renderer.xr.getSession();
   if (existing) {
-    onConnected?.(existing);
-    return existing;
+    if (renderer.xr.isPresenting) {
+      onConnected?.(existing);
+      return existing;
+    }
+    try { await existing.end(); } catch { /* already dead — fine, we just need getSession() clear */ }
   }
 
   // requestSession() can sit pending with no error at all while the runtime
@@ -57,16 +68,29 @@ export async function connectVRSession(renderer, { onConnected, onEnded, onWaiti
   session.addEventListener("end", () => onEnded?.());
 
   try {
-    // Ensure the WebGL context is XR-compatible before Three.js builds its
-    // XRWebGLLayer — on Quest Browser, skipping this is the classic source
-    // of "An attempt was made to use an object that is not, or is no
-    // longer, usable" (InvalidStateError).
-    const gl = renderer.getContext();
-    if (gl.makeXRCompatible) await gl.makeXRCompatible();
+    // renderer.xr.setSession() already calls gl.makeXRCompatible() and
+    // requests the reference space internally (this matches three.js's own
+    // VRButton.js reference implementation, which never calls
+    // makeXRCompatible manually) — doing it again here was redundant and
+    // not part of the tested pattern.
     await renderer.xr.setSession(session);
   } catch (err) {
-    session.end().catch(() => {});
-    throw new Error(`Couldn't attach VR to the renderer (${err.name}): ${err.message}. Try reloading the page.`);
+    // xrManager.js asks for "local-floor" up front, but that's only an
+    // *optional* feature at session-request time — some runtimes grant the
+    // session anyway and then reject the "local-floor" reference space
+    // specifically here. "local" is mandatory for every immersive-vr
+    // session per spec, so fall back to it instead of hard-failing.
+    try {
+      renderer.xr.setReferenceSpaceType("local");
+      await renderer.xr.setSession(session);
+      renderer.xr.setReferenceSpaceType("local-floor"); // restore for the next session attempt
+      onConnected?.(session);
+      return session;
+    } catch (fallbackErr) {
+      renderer.xr.setReferenceSpaceType("local-floor");
+      session.end().catch(() => {});
+      throw new Error(`Couldn't attach VR to the renderer (${err.name}): ${err.message}. Try reloading the page.`);
+    }
   }
 
   onConnected?.(session);
