@@ -26,6 +26,7 @@ async function handleAttach() {
   try {
     await connectVRSession(xrState.renderer, {
       onConnected: () => setStatus("Connected! Put on your headset and use the thumbstick to move around."),
+      onWaiting: () => setStatus("Still connecting — put on your headset and look for a prompt there to allow VR."),
       onEnded: () => {
         setStatus("VR session ended. Attach again whenever you're ready.");
         attachBtn.disabled = false;

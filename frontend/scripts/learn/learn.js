@@ -153,6 +153,7 @@ async function handleEnterVR() {
   try {
     await connectVRSession(xrState.renderer, {
       onConnected: () => setStatus("In VR! Reach out and grab things — squeeze the grip to pick up, squeeze again to let go."),
+      onWaiting: () => setStatus("Still connecting — put on your headset and look for a prompt there to allow VR."),
       onEnded: () => {
         setStatus("VR session ended.");
         btn.disabled = false;

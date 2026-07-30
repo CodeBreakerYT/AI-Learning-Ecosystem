@@ -3,7 +3,7 @@
  * it to the Three.js renderer. Used by the "Attach" action on the vrSetup
  * page and the "Enter VR" button on the Learn page.
  */
-export async function connectVRSession(renderer, { onConnected, onEnded } = {}) {
+export async function connectVRSession(renderer, { onConnected, onEnded, onWaiting } = {}) {
   if (!navigator.xr) {
     throw new Error("WebXR isn't available in this browser.");
   }
@@ -16,6 +16,13 @@ export async function connectVRSession(renderer, { onConnected, onEnded } = {}) 
     return existing;
   }
 
+  // requestSession() can sit pending with no error at all while the runtime
+  // shows its own "allow this site to use VR" prompt *inside the headset* —
+  // from the page's side that looks identical to a hang. Nudge the caller
+  // after a few seconds so the UI can tell the user to look in the headset
+  // instead of assuming the button did nothing.
+  const waitTimer = onWaiting ? setTimeout(onWaiting, 4000) : null;
+
   // Request the session directly instead of awaiting isSessionSupported()
   // first — that extra await hop can burn through the browser's "recent
   // user gesture" window some devices require for permission prompts.
@@ -25,6 +32,7 @@ export async function connectVRSession(renderer, { onConnected, onEnded } = {}) 
       optionalFeatures: ["local-floor", "bounded-floor", "hand-tracking"]
     });
   } catch (err) {
+    clearTimeout(waitTimer);
     if (err.name === "NotSupportedError") {
       throw new Error("This device/browser doesn't support immersive VR.");
     }
@@ -44,6 +52,7 @@ export async function connectVRSession(renderer, { onConnected, onEnded } = {}) 
       throw new Error(`VR session failed (${err.name}): ${err.message}`);
     }
   }
+  clearTimeout(waitTimer);
 
   session.addEventListener("end", () => onEnded?.());
 

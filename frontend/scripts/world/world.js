@@ -1065,6 +1065,7 @@ export function mount(scene) {
       try {
         await connectVRSession(xrState.renderer, {
           onConnected: () => setStatus("In VR! Walk with the thumbstick, squeeze the grip to grab and throw, pull the trigger to talk to people."),
+          onWaiting: () => setStatus("Still connecting — put on your headset and look for a prompt there to allow VR."),
           onEnded: () => { setStatus("VR session ended."); btn.disabled = false; }
         });
       } catch (err) {
