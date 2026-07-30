@@ -29,11 +29,20 @@ async function start() {
 
   // Picks up a sign-in that fell back to signInWithRedirect() (e.g. the
   // Google popup was blocked) — the page has just reloaded coming back from
-  // Google, so land the now-authenticated user on the Learn page.
+  // Google, so land the now-authenticated user on the Learn page. Firebase
+  // sometimes resolves the redirect via waitForAuthReady()'s own listener
+  // first, in which case getRedirectResult() here returns null even though
+  // the sign-in did complete — so also check auth state directly instead of
+  // only trusting this call's return value, otherwise the user comes back
+  // from Google fully signed in but stuck on the Login screen.
   try {
     const redirectedUser = await consumeGoogleRedirectResult();
     if (redirectedUser) {
       login({ uid: redirectedUser.uid, email: redirectedUser.email, provider: "google" });
+    }
+    const strandedOnLogin =
+      getCurrentUser() && (!window.location.hash || window.location.hash === "#login");
+    if (strandedOnLogin) {
       window.location.hash = "learn";
     }
   } catch (err) {

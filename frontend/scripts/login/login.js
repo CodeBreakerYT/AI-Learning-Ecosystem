@@ -59,6 +59,10 @@ async function handleGoogleLogin() {
     login({ uid: user.uid, email: user.email, provider: "google" });
     window.location.hash = "learn";
   } catch (err) {
+    if (err.code === "auth/popup-closed-by-user" || err.code === "auth/cancelled-popup-request") {
+      setStatus(loginStatusEl, "");
+      return;
+    }
     setStatus(loginStatusEl, err.message, true);
   }
 }
@@ -109,6 +113,10 @@ async function handleGoogleRegister() {
     login({ uid: user.uid, email: user.email, provider: "google" });
     window.location.hash = "learn";
   } catch (err) {
+    if (err.code === "auth/popup-closed-by-user" || err.code === "auth/cancelled-popup-request") {
+      setStatus(registerStatusEl, "");
+      return;
+    }
     setStatus(registerStatusEl, err.message, true);
   }
 }

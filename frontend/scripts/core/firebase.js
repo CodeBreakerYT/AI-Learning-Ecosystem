@@ -48,13 +48,14 @@ export async function loginWithEmail(email, password) {
   return credential.user;
 }
 
-// Codes seen when the popup itself can't open/complete (blocked by the
-// browser, closed before finishing, or unsupported in the current
-// environment) — worth a full-page-redirect retry rather than a hard fail.
+// Codes seen when the popup itself can't open at all (blocked by the browser
+// or unsupported in the current environment) — worth a full-page-redirect
+// retry rather than a hard fail. Deliberately excludes
+// "auth/popup-closed-by-user": that fires whenever the user just closes the
+// popup themselves, and treating it as a fallback trigger was yanking people
+// into an unwanted full-page redirect to Google every time they backed out.
 const POPUP_FALLBACK_CODES = new Set([
   "auth/popup-blocked",
-  "auth/popup-closed-by-user",
-  "auth/cancelled-popup-request",
   "auth/operation-not-supported-in-this-environment"
 ]);
 
