@@ -45,7 +45,14 @@ export async function connectVRSession(renderer, { onConnected, onEnded, onWaiti
   } catch (err) {
     clearTimeout(waitTimer);
     if (err.name === "NotSupportedError") {
-      throw new Error("This device/browser doesn't support immersive VR.");
+      throw new Error(
+        "No VR headset detected by the browser. If your Quest is connected via Link/Air Link, check: " +
+        "(1) The Meta Quest Link app is running on this PC. " +
+        "(2) In the Meta Quest Link app → Settings → General, click 'Set Meta Quest Link as active OpenXR Runtime'. " +
+        "(3) Put on the headset and make sure Quest Link is active (you should see the Link home grid). " +
+        "(4) Restart Chrome after changing the OpenXR runtime. " +
+        "You can also open /xr-check.html for a detailed diagnostic."
+      );
     }
     if (err.name === "SecurityError") {
       throw new Error("VR is blocked here — the site must be opened over https:// (or localhost).");

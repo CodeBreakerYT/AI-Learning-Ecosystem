@@ -1,13 +1,19 @@
-# Switches the system OpenXR runtime to SteamVR so browser WebXR (Chrome/Edge)
-# routes through SteamVR instead of Meta's runtime — which has no
-# "unknown sources" gate. Run this AFTER installing Steam + SteamVR.
+# Switches the CURRENT USER's OpenXR runtime to SteamVR so browser WebXR
+# (Chrome/Edge) routes through SteamVR instead of Meta's runtime — which has
+# no "unknown sources" gate. Run this AFTER installing Steam + SteamVR.
 #
-# Usage: right-click -> Run with PowerShell, OR from an admin terminal:
+# Usage: right-click -> Run with PowerShell, OR from a normal terminal:
 #   powershell -ExecutionPolicy Bypass -File use-steamvr-runtime.ps1
 #
 # The headset must still be connected via Quest Link (Meta app) — that's how
 # the physical Quest is presented to SteamVR. This only changes which runtime
 # the browser talks to.
+#
+# Writes to HKEY_CURRENT_USER, not HKLM: the OpenXR loader checks a per-user
+# override there BEFORE the machine-wide HKLM default, and it needs no admin
+# elevation to write. This also means it must match use-meta-runtime.ps1's
+# target exactly — if one script wrote HKLM while the other wrote HKCU, the
+# HKCU value would silently always win regardless of which script ran last.
 
 $ErrorActionPreference = "Stop"
 
@@ -59,15 +65,15 @@ if (-not $runtime) {
 Write-Host "[+] Found SteamVR OpenXR runtime:" -ForegroundColor Green
 Write-Host "    $runtime"
 
-$key = "HKLM:\SOFTWARE\Khronos\OpenXR\1"
+$key = "HKCU:\SOFTWARE\Khronos\OpenXR\1"
 $current = (Get-ItemProperty $key -ErrorAction SilentlyContinue).ActiveRuntime
-Write-Host "[i] Current active runtime: $current"
+Write-Host "[i] Current active runtime (this user): $current"
 
 if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
 Set-ItemProperty -Path $key -Name "ActiveRuntime" -Value $runtime
 
 $new = (Get-ItemProperty $key).ActiveRuntime
-Write-Host "[✓] Active OpenXR runtime is now:" -ForegroundColor Green
+Write-Host "[✓] Active OpenXR runtime (current user) is now:" -ForegroundColor Green
 Write-Host "    $new"
 Write-Host ""
 Write-Host "Next:" -ForegroundColor Cyan

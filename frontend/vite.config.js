@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import basicSsl from "@vitejs/plugin-basic-ssl";
 
 // GitHub Pages serves this project from a /AI-Learning-Ecosystem/ subpath;
 // Netlify (and local dev) serve it from the domain root. Vite's `base` has
@@ -8,6 +9,9 @@ import { defineConfig } from "vite";
 const base = process.env.GITHUB_ACTIONS ? "/AI-Learning-Ecosystem/" : "/";
 
 export default defineConfig({
+  plugins: [
+    basicSsl()
+  ],
   base,
   server: {
     host: true,
