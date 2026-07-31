@@ -55,11 +55,50 @@ const ZONES = [
 // makes loadCreatures() actually send them soaring at altitude instead of
 // walking them around on the ground like Horse/Fox.
 const CREATURES = [
-  { file: "Flamingo.glb", targetSize: 0.6, extra: 3, flying: true, altitude: [3, 6], radius: 11, speed: 1.3 },
-  { file: "Parrot.glb", targetSize: 0.32, extra: 3, flying: true, altitude: [4, 8], radius: 13, speed: 1.6 },
-  { file: "Stork.glb", targetSize: 0.7, extra: 2, flying: true, altitude: [4, 7], radius: 12, speed: 1.4 },
-  { file: "Horse.glb", targetSize: 1.5, extra: 2 },
-  { file: "Fox.glb", targetSize: 0.55, extra: 3 }
+  { file: "Flamingo.glb", targetSize: 0.6, extra: 5, flying: true, altitude: [3, 6], radius: 11, speed: 1.3 },
+  { file: "Parrot.glb", targetSize: 0.32, extra: 5, flying: true, altitude: [4, 8], radius: 13, speed: 1.6 },
+  { file: "Stork.glb", targetSize: 0.7, extra: 4, flying: true, altitude: [4, 7], radius: 12, speed: 1.4 },
+  { file: "Horse.glb", targetSize: 1.5, extra: 3 },
+  // Fox.glb's rest pose faces the opposite way from the other models here —
+  // without facingOffset it visibly walks backward relative to where it's headed.
+  { file: "Fox.glb", targetSize: 0.55, extra: 6, facingOffset: Math.PI },
+  { file: "Cow.glb", targetSize: 1.6, extra: 3 },
+  { file: "Dog.glb", targetSize: 0.5, extra: 4 },
+  { file: "Giraffe.glb", targetSize: 2.2, extra: 2 },
+  // Low, slow, close-range flutter instead of a bird's wide soaring circle —
+  // butterflies stay near flower height, not up with the storks.
+  { file: "ButterflyModel.glb", targetSize: 0.12, extra: 8, flying: true, altitude: [0.3, 0.9], radius: 4, speed: 0.5 }
+];
+
+// Cat/Chicken/Ladybug ship with no baked animation clips (unlike the rest of
+// CREATURES) — registering them as roamers would just slide them around the
+// ground with no walk cycle to play, so they're placed once as static scene
+// dressing instead (still get a small idle bob — see updateStaticBobbers()).
+// Wagon/Crate are hand-authored props from the Medieval Village MegaKit
+// asset pack, added for detail the procedural box-houses can't provide.
+const STATIC_PROPS = [
+  { file: "Cat.glb", targetSize: 0.32, spots: [VILLAGE_CENTER.clone().add(new THREE.Vector3(1.6, 0, 1.2))] },
+  {
+    file: "Chicken.glb", targetSize: 0.28, spots: [
+      VILLAGE_CENTER.clone().add(new THREE.Vector3(-2.0, 0, -0.3)),
+      VILLAGE_CENTER.clone().add(new THREE.Vector3(-1.7, 0, 0.3)),
+      VILLAGE_CENTER.clone().add(new THREE.Vector3(-2.2, 0, 0.1))
+    ]
+  },
+  {
+    file: "Ladybug.glb", targetSize: 0.04, spots: [
+      CAMP_CENTER.clone().add(new THREE.Vector3(0.5, 0, 0.4)),
+      VILLAGE_CENTER.clone().add(new THREE.Vector3(2.4, 0, 1.0))
+    ]
+  },
+  { file: "village-kit/Prop_Wagon.gltf", targetSize: 1.4, rotationY: 0.6, spots: [MARKET_CENTER.clone().add(new THREE.Vector3(-1.6, 0, -0.6))] },
+  {
+    file: "village-kit/Prop_Crate.gltf", targetSize: 0.5, spots: [
+      MARKET_CENTER.clone().add(new THREE.Vector3(1.3, 0, -0.8)),
+      MARKET_CENTER.clone().add(new THREE.Vector3(1.5, 0, -0.5)),
+      VILLAGE_CENTER.clone().add(new THREE.Vector3(3.0, 0, 0.8))
+    ]
+  }
 ];
 
 const NPC_LINES = [
@@ -136,6 +175,7 @@ let ringMarker = null;
 let campFlames = [];
 let river = null;
 let butterflies = null; // { group, flutters } — see buildButterflies()
+let staticBobbers = []; // { model, baseY, phase } — animation-less props (Cat/Chicken/Ladybug, Wagon/Crate) get a small idle bob instead of standing perfectly frozen
 let keysDown = new Set();
 let disposed = true;
 let ringScore = 0;
@@ -437,7 +477,13 @@ function buildVillage() {
     { dx: -2.4, dz: -1.5, ry: 0.4 },
     { dx: 2.2, dz: -1.8, ry: -0.5 },
     { dx: -1.6, dz: 2.2, ry: 2.6 },
-    { dx: 2.6, dz: 1.8, ry: -2.3 }
+    { dx: 2.6, dz: 1.8, ry: -2.3 },
+    // Outer ring — fills out the rest of the village's 7m radius instead of
+    // leaving it as bare grass around a cluster of just four houses.
+    { dx: 4.2, dz: -0.3, ry: -1.6 },
+    { dx: -4.0, dz: 0.8, ry: 1.2 },
+    { dx: 0.5, dz: -3.8, ry: 0.9 },
+    { dx: -0.8, dz: 4.0, ry: -0.7 }
   ];
   layout.forEach(({ dx, dz, ry }) => {
     worldGroup.add(buildHouse(VILLAGE_CENTER.x + dx, VILLAGE_CENTER.z + dz, ry));
@@ -599,7 +645,7 @@ function fitAndGround(model, targetSize) {
 // loops for the whole lifetime, translation gives the sense of movement) or
 // { idle, walk } for a model with distinct clips (the NPCs), switched based
 // on whether it's currently moving toward a target or paused.
-function registerRoamer(model, { home, radius, speed, actions, dialogue = null, flying = false, altitudeMin = 0, altitudeMax = 0 }) {
+function registerRoamer(model, { home, radius, speed, actions, dialogue = null, flying = false, altitudeMin = 0, altitudeMax = 0, facingOffset = 0 }) {
   roamers.push({
     root: model,
     home: home.clone(),
@@ -613,7 +659,8 @@ function registerRoamer(model, { home, radius, speed, actions, dialogue = null, 
     dialoguePanel: null,
     flying,
     altitudeMin,
-    altitudeMax
+    altitudeMax,
+    facingOffset
   });
 }
 
@@ -656,7 +703,11 @@ function updateRoamers(delta) {
     roamDelta.normalize().multiplyScalar(Math.min(roamer.speed * delta, dist));
     roamer.root.position.add(roamDelta);
     const facing = Math.atan2(roamDelta.x, roamDelta.z);
-    roamer.root.rotation.y = facing;
+    // Not every glTF sample model was authored facing the same rest
+    // direction — Fox.glb's rest pose faces the opposite way from the other
+    // models here, so without this it visibly walks backward. facingOffset
+    // lets a per-species correction be applied on top of the shared formula.
+    roamer.root.rotation.y = facing + (roamer.facingOffset ?? 0);
   }
 }
 
@@ -745,7 +796,7 @@ function loadCreatures() {
     return animations.find((c) => /walk|run|fly/i.test(c.name)) ?? animations[0];
   }
 
-  const loadPromises = CREATURES.map(({ file, targetSize, extra = 0, flying = false, altitude = [0, 0], radius = 4, speed = 0.5 }) =>
+  const loadPromises = CREATURES.map(({ file, targetSize, extra = 0, flying = false, altitude = [0, 0], radius = 4, speed = 0.5, facingOffset = 0 }) =>
     new Promise((resolve) => {
       loader.load(
         `${import.meta.env.BASE_URL}assets/models/world/${file}`,
@@ -762,7 +813,7 @@ function loadCreatures() {
             mixers.push(mixer);
           }
           registerRoamer(primary, {
-            home, radius, speed, flying,
+            home, radius, speed, flying, facingOffset,
             altitudeMin: altitude[0], altitudeMax: altitude[1],
             actions: { move: mixer?.clipAction(moveClip) }
           });
@@ -781,7 +832,7 @@ function loadCreatures() {
               mixers.push(copyMixer);
             }
             registerRoamer(copy, {
-              home: copyHome, radius, speed, flying,
+              home: copyHome, radius, speed, flying, facingOffset,
               altitudeMin: altitude[0], altitudeMax: altitude[1],
               actions: { move: copyMixer?.clipAction(moveClip) }
             });
@@ -795,6 +846,53 @@ function loadCreatures() {
   );
 
   return Promise.allSettled(loadPromises);
+}
+
+// Loads each STATIC_PROPS entry once and places a clone at every requested
+// spot — same fit-once-then-clone-the-fitted-primary pattern as
+// loadCreatures(), since the grounding Y offset it bakes in only depends on
+// the model's shape and scale, which every clone shares.
+function loadStaticProps() {
+  const loader = new GLTFLoader();
+  const bobbers = [];
+
+  const loadPromises = STATIC_PROPS.map(({ file, targetSize, spots, rotationY }) =>
+    new Promise((resolve) => {
+      loader.load(
+        `${import.meta.env.BASE_URL}assets/models/world/${file}`,
+        (gltf) => {
+          if (disposed) { resolve(); return; }
+          const primary = gltf.scene;
+          fitAndGround(primary, targetSize);
+
+          spots.forEach((spot, i) => {
+            const model = i === 0 ? primary : cloneSkinned(primary);
+            model.position.x = spot.x;
+            model.position.z = spot.z;
+            model.rotation.y = rotationY ?? Math.random() * Math.PI * 2;
+            model.traverse((node) => { if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; } });
+            worldGroup.add(model);
+            bobbers.push({ model, baseY: model.position.y, phase: Math.random() * Math.PI * 2 });
+          });
+          resolve();
+        },
+        undefined,
+        (err) => { console.warn(`Couldn't load ${file}:`, err.message); resolve(); }
+      );
+    })
+  );
+
+  return Promise.allSettled(loadPromises).then(() => {
+    if (!disposed) staticBobbers = bobbers;
+  });
+}
+
+// A gentle sine bob for props with no baked animation clip — just enough to
+// read as "alive" rather than a frozen prop planted in the grass.
+function updateStaticBobbers(elapsed) {
+  for (const b of staticBobbers) {
+    b.model.position.y = b.baseY + Math.sin(elapsed * 1.6 + b.phase) * 0.015;
+  }
 }
 
 const NPC_SPOTS = [
@@ -1611,9 +1709,9 @@ function buildFlowerPatch() {
   const geometry = new THREE.ConeGeometry(0.035, 0.09, 5);
   geometry.translate(0, 0.045, 0);
   const material = new THREE.MeshStandardMaterial({ roughness: 0.7, vertexColors: true });
-  const mesh = new THREE.InstancedMesh(geometry, material, 260);
+  const mesh = new THREE.InstancedMesh(geometry, material, 420);
   mesh.name = "flowerPatch";
-  scatterInstances(mesh, 260, { minR: 3, maxR: 30, minScale: 0.8, maxScale: 1.6, colorVariants: petalColors });
+  scatterInstances(mesh, 420, { minR: 3, maxR: 30, minScale: 0.8, maxScale: 1.6, colorVariants: petalColors });
   return mesh;
 }
 
@@ -1621,29 +1719,29 @@ function buildGrassTufts() {
   const geometry = new THREE.ConeGeometry(0.05, 0.22, 4);
   geometry.translate(0, 0.11, 0);
   const material = new THREE.MeshStandardMaterial({ color: 0x3f7a45, roughness: 1 });
-  const mesh = new THREE.InstancedMesh(geometry, material, 420);
+  const mesh = new THREE.InstancedMesh(geometry, material, 650);
   mesh.name = "grassTufts";
-  scatterInstances(mesh, 420, { minR: 2.5, maxR: 31, minScale: 0.7, maxScale: 1.7 });
+  scatterInstances(mesh, 650, { minR: 2.5, maxR: 31, minScale: 0.7, maxScale: 1.7 });
   return mesh;
 }
 
 function buildBushes() {
   const geometry = new THREE.IcosahedronGeometry(0.26, 0);
   const material = new THREE.MeshStandardMaterial({ color: 0x336640, roughness: 0.95 });
-  const mesh = new THREE.InstancedMesh(geometry, material, 70);
+  const mesh = new THREE.InstancedMesh(geometry, material, 110);
   mesh.castShadow = true;
   mesh.name = "bushes";
-  scatterInstances(mesh, 70, { minR: 4, maxR: 29, extraRadius: 0.6, minScale: 0.8, maxScale: 1.5 });
+  scatterInstances(mesh, 110, { minR: 4, maxR: 29, extraRadius: 0.6, minScale: 0.8, maxScale: 1.5 });
   return mesh;
 }
 
 function buildRocks() {
   const geometry = new THREE.DodecahedronGeometry(0.16, 0);
   const material = new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 1 });
-  const mesh = new THREE.InstancedMesh(geometry, material, 55);
+  const mesh = new THREE.InstancedMesh(geometry, material, 90);
   mesh.castShadow = true;
   mesh.name = "rocks";
-  scatterInstances(mesh, 55, { minR: 3, maxR: 31, minScale: 0.6, maxScale: 1.8 });
+  scatterInstances(mesh, 90, { minR: 3, maxR: 31, minScale: 0.6, maxScale: 1.8 });
   return mesh;
 }
 
@@ -1823,15 +1921,17 @@ export function mount(scene) {
 
   // Rig-attached (unlike the playground scoreboard, which stays fixed in
   // world space) so the current objective stays readable no matter which
-  // of the story's locations the player is standing in.
-  questLogPanel = createTextPanel({ width: 1.5, height: 0.46, fontSize: 26 });
-  questLogPanel.position.set(-1.4, 2.1, -1.9);
-  questLogPanel.rotation.y = 0.35;
+  // of the story's locations the player is standing in. No yaw rotation —
+  // it used to sit at a 0.35 rad angle far off to the left, which reads as
+  // an extreme, warped trapezoid in perspective from the default forward
+  // view instead of a clean readable panel.
+  questLogPanel = createTextPanel({ width: 1.15, height: 0.36, fontSize: 22 });
+  questLogPanel.position.set(-0.95, 1.85, -2.3);
   xrState.rig.add(questLogPanel);
   refreshQuestLog();
 
   setStatus("Loading world…");
-  Promise.allSettled([loadCreatures(), loadCast()]).then(() => { if (!disposed) setStatus(""); });
+  Promise.allSettled([loadCreatures(), loadCast(), loadStaticProps()]).then(() => { if (!disposed) setStatus(""); });
 
   document.addEventListener("keydown", handleKeyDown);
   document.addEventListener("keyup", handleKeyUp);
@@ -1859,6 +1959,7 @@ export function mount(scene) {
     });
     if (river) river.material.map?.offset.set(0, -elapsed * 0.05);
     updateButterflies();
+    updateStaticBobbers(elapsed);
   };
   xrState.updatables.add(updateFn);
 
@@ -1915,6 +2016,7 @@ export function unmount() {
   campFlames = [];
   river = null;
   butterflies = null;
+  staticBobbers = [];
   scoreboard = null;
   ringMarker = null;
   ringScore = 0;

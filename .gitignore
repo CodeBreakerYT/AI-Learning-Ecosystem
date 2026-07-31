@@ -4,3 +4,9 @@ dist/
 *.log
 .env
 proj_sample/
+
+# Raw source asset packs (Medieval Village MegaKit, stylized animal pack) —
+# ~180MB of FBX/OBJ/texture variants we don't use. The specific glTF/GLB
+# pieces actually loaded by the app are copied into frontend/public/assets/
+# (which IS tracked) — this is only the untouched original download.
+/assets/
