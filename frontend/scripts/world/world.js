@@ -7,7 +7,7 @@ import { xrState } from "../core/xrState.js";
 import { connectVRSession } from "../core/xrSession.js";
 import { createInteractionManager } from "../core/interaction.js";
 import { createGrabSystem } from "../core/grabSystem.js";
-import { createTextPanel, createButton3D, disposeTree } from "../core/textPanel.js";
+import { createTextPanel, createLabel, createButton3D, disposeTree } from "../core/textPanel.js";
 import { createPhysicsWorld } from "../core/physicsWorld.js";
 
 /**
@@ -40,10 +40,14 @@ const COLLIDE_SOUND_COOLDOWN = 150; // ms, per body — avoids machine-gun buzz 
 // overlapping and to keep creatures/NPCs roaming near where they belong.
 const VILLAGE_CENTER = new THREE.Vector3(20, 0, 12);
 const CAMP_CENTER = new THREE.Vector3(-20, 0, 12);
+const MARKET_CENTER = new THREE.Vector3(8, 0, 5);
+const KITCHEN_CENTER = new THREE.Vector3(28, 0, 4);
 const ZONES = [
   { center: PLAYGROUND_CENTER, radius: 4.5 },
   { center: VILLAGE_CENTER, radius: 7 },
-  { center: CAMP_CENTER, radius: 6 }
+  { center: CAMP_CENTER, radius: 6 },
+  { center: MARKET_CENTER, radius: 4 },
+  { center: KITCHEN_CENTER, radius: 4 }
 ];
 
 const CREATURES = [
@@ -59,6 +63,52 @@ const NPC_LINES = [
   ["Nice weather for a walk, isn't it?", "Try not to get lost near the mountains."],
   ["The camp folks make a good fire.", "Go say hello."]
 ];
+
+// A short linear story: the guide relocates to each location in turn and
+// the quest log always shows the current step. Persisted to sessionStorage
+// (same pattern as bestRingScore) so leaving and re-entering World resumes
+// where the player left off instead of restarting the day.
+const QUEST_STAGE_KEY = "ale.world.questStage";
+const QUEST_STAGES = {
+  intro: {
+    title: "Buy potatoes",
+    objective: "Find the market and buy potatoes for breakfast.",
+    guideLocation: () => new THREE.Vector3(2, 0, 2),
+    guideLines: ["Morning! Let's get breakfast.", "Head to the market and buy some potatoes."]
+  },
+  market: {
+    title: "Buy potatoes",
+    objective: "Work out the vendor's total and drop the right coin in the bowl.",
+    guideLocation: () => MARKET_CENTER.clone().add(new THREE.Vector3(-1.2, 0, 0.6)),
+    guideLines: ["Check the sign, work out the total,", "and drop the right coin in the bowl."]
+  },
+  golf: {
+    title: "Prove your aim",
+    objective: "Putt the ball into the glowing ring at the playground.",
+    guideLocation: () => PLAYGROUND_CENTER.clone().add(new THREE.Vector3(-1.2, 0, 1.2)),
+    guideLines: ["Breakfast sorted!", "Now grab that ball and land it in the ring."]
+  },
+  kitchen: {
+    title: "Cook something",
+    objective: "Mix the right ingredients at the kitchen counter.",
+    guideLocation: () => KITCHEN_CENTER.clone().add(new THREE.Vector3(-1.2, 0, 0.6)),
+    guideLines: ["Great putt!", "One more thing — mix up today's recipe in the kitchen."]
+  },
+  complete: {
+    title: "All done!",
+    objective: "You've earned a well-deserved break.",
+    guideLocation: () => KITCHEN_CENTER.clone().add(new THREE.Vector3(1.2, 0, 0.6)),
+    guideLines: ["You did it — potatoes bought,", "aim proven, and dinner's cooking. Nice work today!"]
+  }
+};
+
+const KITCHEN_INGREDIENTS = [
+  { name: "Flour", color: 0xf3e5c9 },
+  { name: "Water", color: 0x7fd1e0 },
+  { name: "Salt", color: 0xffffff },
+  { name: "Oil", color: 0xd7c14b }
+];
+const KITCHEN_RECIPE = { Flour: 2, Water: 1, Salt: 1 };
 
 const statusEl = () => document.getElementById("world-status");
 const enterVRBtn = () => document.getElementById("world-enter-vr");
@@ -82,6 +132,21 @@ let ringScore = 0;
 let bestRingScore = 0;
 let audioCtx = null;
 let elapsed = 0;
+
+// Story/quest state
+let questStage = "intro";
+let questLogPanel = null;
+let guideRoamer = null;
+let marketCoins = []; // { mesh, body, home, value }
+let marketCorrectValue = 0;
+const marketBowlPos = new THREE.Vector3();
+let marketQuestionPanel = null;
+let marketFeedbackPanel = null;
+let kitchenIngredients = []; // { mesh, body, home, ing }
+let kitchenZoneAtoms = []; // { name, mesh }
+let kitchenLocked = false;
+let kitchenFeedbackPanel = null;
+const kitchenZonePos = new THREE.Vector3();
 
 const keyQuaternion = new THREE.Quaternion();
 const keyDirection = new THREE.Vector3();
@@ -481,14 +546,33 @@ function buildRiver() {
   worldGroup.add(river);
 }
 
+// For a plain Mesh, raw vertex position × the node's own matrixWorld is the
+// true world position, so Box3.setFromObject() works directly. For a
+// SkinnedMesh that's not the case — the actual posed shape comes from the
+// skeleton's bone transforms, not the mesh node's own (often near-trivial)
+// matrixWorld — so measuring it the plain way yields a near-degenerate box.
+// Bone world positions give a reliable stand-in for the character's extent.
+function measureWorldBox(model) {
+  model.updateWorldMatrix(true, true);
+  const box = new THREE.Box3();
+  const v = new THREE.Vector3();
+  let hasBones = false;
+  model.traverse((node) => {
+    if (node.isBone) {
+      hasBones = true;
+      box.expandByPoint(node.getWorldPosition(v));
+    }
+  });
+  if (!hasBones) box.setFromObject(model);
+  return box;
+}
+
 function fitAndGround(model, targetSize) {
-  const box = new THREE.Box3().setFromObject(model);
-  const size = box.getSize(new THREE.Vector3());
+  const size = measureWorldBox(model).getSize(new THREE.Vector3());
   const maxDim = Math.max(size.x, size.y, size.z) || 1;
   model.scale.setScalar(targetSize / maxDim);
 
-  const groundedBox = new THREE.Box3().setFromObject(model);
-  model.position.y -= groundedBox.min.y;
+  model.position.y -= measureWorldBox(model).min.y;
 }
 
 // Registers a loaded model as something that wanders a little around a home
@@ -567,6 +651,41 @@ function showDialogue(roamer) {
   }, 3200);
 }
 
+function setGuideDialogue() {
+  if (!guideRoamer) return;
+  guideRoamer.dialogue = QUEST_STAGES[questStage].guideLines;
+}
+
+// Teleports the guide to the new stage's location — a walk-over would be
+// nicer, but a straight relocation is far more reliable to get right, and
+// the player has already moved on to the next place by the time this fires.
+function relocateGuide() {
+  if (!guideRoamer) return;
+  const pos = QUEST_STAGES[questStage].guideLocation();
+  guideRoamer.root.position.x = pos.x;
+  guideRoamer.root.position.z = pos.z;
+  guideRoamer.home.set(pos.x, guideRoamer.root.position.y, pos.z);
+  guideRoamer.target.copy(guideRoamer.home);
+}
+
+function refreshQuestLog() {
+  if (!questLogPanel) return;
+  const stage = QUEST_STAGES[questStage];
+  questLogPanel.userData.setText([
+    { text: stage.title, bold: true, size: 30, color: "#fbbf24" },
+    { text: stage.objective, size: 22, color: "#e8ecf6" }
+  ]);
+}
+
+function advanceQuest(newStage) {
+  if (questStage === newStage || !QUEST_STAGES[newStage]) return;
+  questStage = newStage;
+  try { sessionStorage.setItem(QUEST_STAGE_KEY, questStage); } catch { /* storage unavailable */ }
+  setGuideDialogue();
+  relocateGuide();
+  refreshQuestLog();
+}
+
 function loadCreatures() {
   const loader = new GLTFLoader();
   const spotCount = CREATURES.reduce((sum, c) => sum + 1 + (c.extra ?? 0), 0);
@@ -639,7 +758,33 @@ const NPC_SPOTS = [
   { center: CAMP_CENTER, offset: new THREE.Vector3(-1.0, 0, -0.8) }
 ];
 
-function loadNpcs() {
+// Clones a model's materials so a per-character tint (the guide) doesn't
+// bleed onto every other SkeletonUtils.clone sharing the same original
+// material instances.
+function tintModel(model, color) {
+  model.traverse((node) => {
+    if (!node.isMesh || !node.material) return;
+    const materials = Array.isArray(node.material) ? node.material : [node.material];
+    const tinted = materials.map((mat) => {
+      const clone = mat.clone();
+      clone.color?.multiply(color);
+      return clone;
+    });
+    node.material = Array.isArray(node.material) ? tinted : tinted[0];
+  });
+}
+
+function addQuestMarker(model, symbol, color) {
+  const marker = createLabel(symbol, { width: 0.3, height: 0.3, fontSize: 200, color });
+  marker.position.y = 2.3;
+  model.add(marker);
+  return marker;
+}
+
+// Loads Soldier.glb once and spawns every human character from it — the
+// ambient village/camp NPCs, the market vendor, and the story guide —
+// instead of re-downloading the same asset per role.
+function loadCast() {
   const loader = new GLTFLoader();
   return new Promise((resolve) => {
     loader.load(
@@ -647,38 +792,60 @@ function loadNpcs() {
       (gltf) => {
         if (disposed) { resolve(); return; }
         const clipFor = (name) => gltf.animations.find((c) => c.name === name);
+        const idleClip = clipFor("Idle") ?? gltf.animations[0];
+        const walkClip = clipFor("Walk") ?? gltf.animations[0];
 
-        NPC_SPOTS.forEach((spot, i) => {
-          const model = i === 0 ? gltf.scene : cloneSkinned(gltf.scene);
+        function spawnCharacter(spawnPos, { radius = 2.5, speed = 0.35, dialogue = null, tint = null, marker = null } = {}) {
+          const model = cloneSkinned(gltf.scene);
           fitAndGround(model, 1.7);
-          const home = spot.center.clone().add(spot.offset);
           // x/z only — preserve the y fitAndGround() just computed so the
-          // NPC's feet sit on the ground instead of snapping to y=0.
-          model.position.x = home.x;
-          model.position.z = home.z;
-          home.y = model.position.y;
+          // character's feet sit on the ground instead of snapping to y=0.
+          model.position.x = spawnPos.x;
+          model.position.z = spawnPos.z;
+          const home = new THREE.Vector3(spawnPos.x, model.position.y, spawnPos.z);
           model.rotation.y = Math.random() * Math.PI * 2;
           model.traverse((node) => { if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; } });
+          if (tint) tintModel(model, tint);
           worldGroup.add(model);
 
           const mixer = new THREE.AnimationMixer(model);
-          const idleClip = clipFor("Idle") ?? gltf.animations[0];
-          const walkClip = clipFor("Walk") ?? gltf.animations[0];
           const idle = idleClip ? mixer.clipAction(idleClip) : null;
           const walk = walkClip ? mixer.clipAction(walkClip) : null;
           idle?.play();
           mixers.push(mixer);
 
-          registerRoamer(model, { home, radius: 2.5, speed: 0.35, actions: { idle, walk }, dialogue: NPC_LINES[i % NPC_LINES.length] });
+          registerRoamer(model, { home, radius, speed, actions: { idle, walk }, dialogue });
           const roamer = roamers[roamers.length - 1];
           roamer.current = "idle";
+          if (marker) roamer.marker = addQuestMarker(model, marker.symbol, marker.color);
 
           interaction.add(model, {
             onSelect: () => showDialogue(roamer),
             onHoverStart: () => { model.scale.multiplyScalar(1.05); },
             onHoverEnd: () => { model.scale.multiplyScalar(1 / 1.05); }
           });
+
+          return roamer;
+        }
+
+        NPC_SPOTS.forEach((spot, i) => {
+          spawnCharacter(spot.center.clone().add(spot.offset), { dialogue: NPC_LINES[i % NPC_LINES.length] });
         });
+
+        spawnCharacter(MARKET_CENTER.clone().add(new THREE.Vector3(0, 0, 0.9)), {
+          radius: 0.3,
+          speed: 0.2,
+          dialogue: ["Fresh potatoes!", "Check the sign for today's price."]
+        });
+
+        guideRoamer = spawnCharacter(QUEST_STAGES[questStage].guideLocation(), {
+          radius: 0.3,
+          speed: 0.2,
+          tint: new THREE.Color(0x8fb3ff),
+          marker: { symbol: "!", color: "#fbbf24" }
+        });
+        setGuideDialogue();
+
         resolve();
       },
       undefined,
@@ -823,7 +990,7 @@ function playThud(kind, strength) {
 // collision and restitution on every throw. Also wires a synthesized impact
 // thud off cannon-es's own 'collide' event, throttled per body so a resting
 // contact doesn't machine-gun the sound every physics step.
-function makeGrabbableProp(mesh, body, { kind = "crate", throwBoost = 1.3 } = {}) {
+function makeGrabbableProp(mesh, body, { kind = "crate", throwBoost = 1.3, onDrop = null } = {}) {
   worldGroup.add(mesh);
   physics.addBody(mesh, body);
   body.linearDamping = 0.05;
@@ -854,6 +1021,7 @@ function makeGrabbableProp(mesh, body, { kind = "crate", throwBoost = 1.3 } = {}
       body.velocity.copy(releaseVelocity).scale(throwBoost, body.velocity);
       body.wakeUp();
       physics.setSync(mesh, true);
+      onDrop?.(mesh);
     }
   });
 }
@@ -916,6 +1084,302 @@ function resetProps() {
   });
 }
 
+function buildMarketCoin() {
+  const mesh = new THREE.Group();
+  const disc = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.08, 0.02, 20),
+    new THREE.MeshStandardMaterial({ color: 0xffd54a, metalness: 0.6, roughness: 0.3, emissive: 0xffd54a, emissiveIntensity: 0.15 })
+  );
+  mesh.add(disc);
+  const label = createLabel("0", { width: 0.14, height: 0.14, fontSize: 110 });
+  label.rotation.x = -Math.PI / 2;
+  label.position.y = 0.011;
+  mesh.add(label);
+  mesh.userData.label = label;
+  return mesh;
+}
+
+function generateMarketQuestion() {
+  const price = 2 + Math.floor(Math.random() * 5);
+  const kg = 2 + Math.floor(Math.random() * 3);
+  marketCorrectValue = price * kg;
+  marketQuestionPanel.userData.setText([
+    { text: `Vendor: "Potatoes are ${price} coins/kg.`, bold: true, size: 24 },
+    { text: `I need ${kg}kg — how many coins do I owe?"`, size: 22 }
+  ]);
+
+  const values = new Set([marketCorrectValue]);
+  while (values.size < 4) {
+    const offset = (1 + Math.floor(Math.random() * 4)) * (Math.random() < 0.5 ? -1 : 1);
+    const candidate = marketCorrectValue + offset;
+    if (candidate > 0) values.add(candidate);
+  }
+  const shuffled = [...values].sort(() => Math.random() - 0.5);
+  marketCoins.forEach((coin, i) => {
+    coin.value = shuffled[i];
+    coin.mesh.userData.label.userData.setText(String(coin.value));
+  });
+}
+
+function handleCoinDrop(mesh) {
+  const coin = marketCoins.find((c) => c.mesh === mesh);
+  if (!coin) return;
+  const worldPos = mesh.getWorldPosition(new THREE.Vector3());
+  if (worldPos.distanceTo(marketBowlPos) > 0.22) return; // missed the bowl
+
+  if (coin.value === marketCorrectValue) {
+    marketFeedbackPanel.userData.setText([{ text: "Correct! Thanks!", bold: true, size: 28, color: "#34d399" }]);
+    advanceQuest("golf");
+  } else {
+    marketFeedbackPanel.userData.setText([
+      { text: `${coin.value} isn't right —`, size: 24, color: "#f87171" },
+      { text: "try again.", size: 22 }
+    ]);
+    setTimeout(() => {
+      coin.mesh.position.copy(coin.home);
+      coin.body.position.copy(coin.home);
+      coin.body.velocity.setZero();
+      coin.body.angularVelocity.setZero();
+      coin.body.wakeUp();
+    }, 500);
+  }
+}
+
+// The market — the math quest. A vendor (spawned in loadCast) poses an
+// arithmetic problem; grab the correctly-numbered coin off the tray and
+// drop it in the payment bowl to advance the story.
+function buildMarket() {
+  const group = new THREE.Group();
+  group.position.set(MARKET_CENTER.x, 0, MARKET_CENTER.z);
+  worldGroup.add(group);
+
+  const counter = new THREE.Mesh(
+    new THREE.BoxGeometry(1.6, 0.9, 0.6),
+    new THREE.MeshStandardMaterial({ color: 0x8a6a45, roughness: 0.8 })
+  );
+  counter.position.y = 0.45;
+  counter.castShadow = true;
+  counter.receiveShadow = true;
+  group.add(counter);
+
+  const awning = new THREE.Mesh(
+    new THREE.BoxGeometry(2.0, 0.08, 0.9),
+    new THREE.MeshStandardMaterial({ color: 0xd94f4f, roughness: 0.7 })
+  );
+  awning.position.set(0, 1.7, -0.1);
+  awning.rotation.x = -0.15;
+  awning.castShadow = true;
+  group.add(awning);
+
+  [-0.9, 0.9].forEach((x) => {
+    const post = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.04, 1.7, 8),
+      new THREE.MeshStandardMaterial({ color: 0x5b4128, roughness: 0.8 })
+    );
+    post.position.set(x, 0.85, -0.25);
+    group.add(post);
+  });
+
+  const basket = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.22, 0.18, 0.25, 12),
+    new THREE.MeshStandardMaterial({ color: 0x8a5a2b, roughness: 0.85 })
+  );
+  basket.position.set(0.5, 0.125, 0.35);
+  group.add(basket);
+  for (let i = 0; i < 6; i++) {
+    const potato = new THREE.Mesh(
+      new THREE.SphereGeometry(0.06, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0xc2a15a, roughness: 0.9 })
+    );
+    potato.scale.set(1, 0.8, 1.1);
+    potato.position.set(0.5 + (Math.random() - 0.5) * 0.2, 0.28 + Math.random() * 0.05, 0.35 + (Math.random() - 0.5) * 0.2);
+    group.add(potato);
+  }
+
+  marketQuestionPanel = createTextPanel({ width: 1.7, height: 0.5, fontSize: 24 });
+  marketQuestionPanel.position.set(0, 2.0, -0.9);
+  marketQuestionPanel.lookAt(MARKET_CENTER.x, 1.5, MARKET_CENTER.z - 3); // lookAt targets are world-space, unlike position
+  group.add(marketQuestionPanel);
+
+  marketFeedbackPanel = createTextPanel({ width: 1.3, height: 0.34, fontSize: 22, border: "rgba(167, 139, 250, 0.8)" });
+  marketFeedbackPanel.position.set(1.5, 1.7, -0.4);
+  marketFeedbackPanel.rotation.y = -0.5;
+  group.add(marketFeedbackPanel);
+
+  const bowlPos = new THREE.Vector3(MARKET_CENTER.x, 0.95, MARKET_CENTER.z - 0.5);
+  marketBowlPos.copy(bowlPos);
+  const bowlRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.14, 0.015, 10, 30),
+    new THREE.MeshStandardMaterial({ color: 0x34d399, emissive: 0x34d399, emissiveIntensity: 0.5 })
+  );
+  bowlRing.rotation.x = Math.PI / 2;
+  bowlRing.position.copy(bowlPos);
+  worldGroup.add(bowlRing);
+
+  const coinHomesLocalX = [-0.3, -0.1, 0.1, 0.3];
+  marketCoins = coinHomesLocalX.map((dx) => {
+    const home = new THREE.Vector3(MARKET_CENTER.x + dx, 0.95, MARKET_CENTER.z + 0.35);
+    const mesh = buildMarketCoin();
+    mesh.position.copy(home);
+    mesh.castShadow = true;
+
+    const body = new CANNON.Body({ mass: 0.3, material: physics.materials.crate });
+    body.addShape(new CANNON.Cylinder(0.08, 0.08, 0.02, 20));
+    body.position.copy(home);
+    makeGrabbableProp(mesh, body, { kind: "coin", throwBoost: 1.1, onDrop: handleCoinDrop });
+
+    return { mesh, body, home, value: 0 };
+  });
+
+  generateMarketQuestion();
+}
+
+function kitchenCounts() {
+  const counts = {};
+  kitchenZoneAtoms.forEach((a) => { counts[a.name] = (counts[a.name] ?? 0) + 1; });
+  return counts;
+}
+
+function refreshKitchenFeedback(text, color) {
+  kitchenFeedbackPanel.userData.setText([{ text, bold: true, size: 24, color }]);
+}
+
+function resetIngredient(entry) {
+  setTimeout(() => {
+    entry.mesh.position.copy(entry.home);
+    entry.mesh.quaternion.set(0, 0, 0, 1);
+    entry.body.position.copy(entry.home);
+    entry.body.quaternion.set(0, 0, 0, 1);
+    entry.body.velocity.setZero();
+    entry.body.angularVelocity.setZero();
+    entry.body.wakeUp();
+  }, 500);
+}
+
+function handleIngredientDrop(mesh) {
+  const entry = kitchenIngredients.find((e) => e.mesh === mesh);
+  if (!entry) return;
+  if (kitchenLocked) { resetIngredient(entry); return; }
+
+  const worldPos = mesh.getWorldPosition(new THREE.Vector3());
+  if (worldPos.distanceTo(kitchenZonePos) > 0.2) return; // missed the pot
+
+  const wouldBe = (kitchenCounts()[entry.ing.name] ?? 0) + 1;
+  if (wouldBe > (KITCHEN_RECIPE[entry.ing.name] ?? 0)) {
+    refreshKitchenFeedback(`Too much ${entry.ing.name}!`, "#f87171");
+    resetIngredient(entry);
+    return;
+  }
+
+  kitchenZoneAtoms.push({ name: entry.ing.name, mesh });
+  const matches = Object.keys(KITCHEN_RECIPE).every((n) => (kitchenCounts()[n] ?? 0) === KITCHEN_RECIPE[n]);
+  if (matches) {
+    kitchenLocked = true;
+    kitchenFeedbackPanel.userData.setText([
+      { text: "Perfect mix!", bold: true, size: 28, color: "#34d399" },
+      { text: "Dinner's on its way.", size: 22 }
+    ]);
+    advanceQuest("complete");
+  } else {
+    refreshKitchenFeedback(`Added ${entry.ing.name}`, "#e8ecf6");
+  }
+}
+
+function spawnKitchenIngredient(ing, standWorldPos) {
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.06, 16, 12),
+    new THREE.MeshStandardMaterial({ color: ing.color, emissive: ing.color, emissiveIntensity: 0.2, roughness: 0.4 })
+  );
+  mesh.castShadow = true;
+  const home = standWorldPos.clone().add(new THREE.Vector3(0, 0.32, 0));
+  mesh.position.copy(home);
+
+  const body = new CANNON.Body({ mass: 0.2, material: physics.materials.ball });
+  body.addShape(new CANNON.Sphere(0.06));
+  body.position.copy(home);
+  makeGrabbableProp(mesh, body, { kind: "ingredient", throwBoost: 1.1, onDrop: handleIngredientDrop });
+
+  kitchenIngredients.push({ mesh, body, home, ing });
+}
+
+// The kitchen — the chemistry quest. Grab the right ingredients off their
+// stands and drop them in the pot to match the recipe on the board.
+function buildKitchen() {
+  const group = new THREE.Group();
+  group.position.set(KITCHEN_CENTER.x, 0, KITCHEN_CENTER.z);
+  worldGroup.add(group);
+
+  const counter = new THREE.Mesh(
+    new THREE.BoxGeometry(2.4, 0.9, 0.7),
+    new THREE.MeshStandardMaterial({ color: 0xdad2c3, roughness: 0.8 })
+  );
+  counter.position.y = 0.45;
+  counter.castShadow = true;
+  counter.receiveShadow = true;
+  group.add(counter);
+
+  const stove = new THREE.Mesh(
+    new THREE.BoxGeometry(0.6, 0.5, 0.6),
+    new THREE.MeshStandardMaterial({ color: 0x30343d, roughness: 0.6, metalness: 0.3 })
+  );
+  stove.position.set(0.9, 0.7, 0);
+  stove.castShadow = true;
+  group.add(stove);
+
+  const pot = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.18, 0.15, 0.2, 16),
+    new THREE.MeshStandardMaterial({ color: 0x40464f, metalness: 0.5, roughness: 0.4 })
+  );
+  pot.position.set(0.9, 1.0, 0);
+  group.add(pot);
+  kitchenZonePos.set(KITCHEN_CENTER.x + 0.9, 1.0, KITCHEN_CENTER.z);
+
+  const zoneRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.14, 0.012, 10, 30),
+    new THREE.MeshStandardMaterial({ color: 0xf59e0b, emissive: 0xf59e0b, emissiveIntensity: 0.4 })
+  );
+  zoneRing.rotation.x = Math.PI / 2;
+  zoneRing.position.set(0.9, 1.02, 0);
+  group.add(zoneRing);
+
+  const kitchenPanel = createTextPanel({ width: 1.8, height: 0.5, fontSize: 22 });
+  kitchenPanel.position.set(0, 2.0, -0.9);
+  kitchenPanel.lookAt(KITCHEN_CENTER.x, 1.5, KITCHEN_CENTER.z - 3); // lookAt targets are world-space, unlike position
+  const needText = Object.entries(KITCHEN_RECIPE).map(([n, c]) => `${c} × ${n}`).join("  +  ");
+  kitchenPanel.userData.setText([
+    { text: "Recipe:", bold: true, size: 26, color: "#fbbf24" },
+    { text: needText, size: 22 }
+  ]);
+  group.add(kitchenPanel);
+
+  kitchenFeedbackPanel = createTextPanel({ width: 1.3, height: 0.34, fontSize: 22, border: "rgba(245, 158, 11, 0.8)" });
+  kitchenFeedbackPanel.position.set(1.6, 1.7, -0.4);
+  kitchenFeedbackPanel.rotation.y = -0.5;
+  refreshKitchenFeedback("Mix the ingredients in the pot", "#e8ecf6");
+  group.add(kitchenFeedbackPanel);
+
+  KITCHEN_INGREDIENTS.forEach((ing, i) => {
+    const standLocal = new THREE.Vector3(-1.0 + i * 0.7, 0, 0.6);
+    const stand = new THREE.Group();
+    stand.position.copy(standLocal);
+    group.add(stand);
+
+    const post = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.035, 0.045, 0.3, 12),
+      new THREE.MeshStandardMaterial({ color: 0x8a6a45, roughness: 0.7 })
+    );
+    post.position.y = 0.15;
+    stand.add(post);
+
+    const label = createLabel(ing.name, { width: 0.32, height: 0.14, fontSize: 60 });
+    label.position.set(0, -0.06, 0.05);
+    stand.add(label);
+
+    const standWorld = new THREE.Vector3(KITCHEN_CENTER.x + standLocal.x, 0, KITCHEN_CENTER.z + standLocal.z);
+    spawnKitchenIngredient(ing, standWorld);
+  });
+}
+
 function buildUI() {
   scoreboard = createTextPanel({ width: 1.7, height: 0.56, fontSize: 30 });
   scoreboard.position.set(PLAYGROUND_CENTER.x, 2.1, PLAYGROUND_CENTER.z + 2.6);
@@ -948,6 +1412,7 @@ function updateRingScoring() {
       ringScore += 1;
       changed = true;
       flashRing();
+      if (questStage === "golf") advanceQuest("kitchen");
     } else if (!inside && prop.inRing) {
       prop.inRing = false;
     }
@@ -995,6 +1460,12 @@ export function mount(scene) {
   ringScore = 0;
   elapsed = 0;
   try { bestRingScore = Number(sessionStorage.getItem(BEST_SCORE_KEY)) || 0; } catch { bestRingScore = 0; }
+  try {
+    const saved = sessionStorage.getItem(QUEST_STAGE_KEY);
+    questStage = saved && QUEST_STAGES[saved] ? saved : "intro";
+  } catch { questStage = "intro"; }
+  kitchenLocked = false;
+  kitchenZoneAtoms = [];
 
   const floor = scene.getObjectByName("floor");
   const grid = scene.getObjectByName("grid");
@@ -1029,10 +1500,21 @@ export function mount(scene) {
   buildPyramid();
   buildRing();
   buildUI();
+  buildMarket();
+  buildKitchen();
   refreshScoreboard();
 
+  // Rig-attached (unlike the playground scoreboard, which stays fixed in
+  // world space) so the current objective stays readable no matter which
+  // of the story's locations the player is standing in.
+  questLogPanel = createTextPanel({ width: 1.5, height: 0.46, fontSize: 26 });
+  questLogPanel.position.set(-1.4, 2.1, -1.9);
+  questLogPanel.rotation.y = 0.35;
+  xrState.rig.add(questLogPanel);
+  refreshQuestLog();
+
   setStatus("Loading world…");
-  Promise.allSettled([loadCreatures(), loadNpcs()]).then(() => { if (!disposed) setStatus(""); });
+  Promise.allSettled([loadCreatures(), loadCast()]).then(() => { if (!disposed) setStatus(""); });
 
   document.addEventListener("keydown", handleKeyDown);
   document.addEventListener("keyup", handleKeyUp);
@@ -1105,6 +1587,15 @@ export function unmount() {
   ringMarker = null;
   ringScore = 0;
 
+  guideRoamer = null;
+  marketCoins = [];
+  marketQuestionPanel = null;
+  marketFeedbackPanel = null;
+  kitchenIngredients = [];
+  kitchenZoneAtoms = [];
+  kitchenLocked = false;
+  kitchenFeedbackPanel = null;
+
   physics?.dispose();
   physics = null;
 
@@ -1120,6 +1611,12 @@ export function unmount() {
   if (floor) floor.visible = true;
   if (grid) grid.visible = true;
   if (demoCube) demoCube.visible = true;
+
+  if (questLogPanel) {
+    xrState.rig.remove(questLogPanel);
+    disposeTree(questLogPanel);
+    questLogPanel = null;
+  }
 
   sceneRef.remove(worldGroup);
   disposeTree(worldGroup);
