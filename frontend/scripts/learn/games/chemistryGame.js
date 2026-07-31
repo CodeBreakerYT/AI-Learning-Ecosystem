@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { createTextPanel, createLabel, disposeTree } from "../../core/textPanel.js";
+import { createTextPanel, createLabel, createButton3D, disposeTree } from "../../core/textPanel.js";
 import { spawnBurst, spawnShockwave } from "../../core/effects.js";
 
 function hexColor(n) {
@@ -75,15 +75,18 @@ const TOPICS = [
 ];
 
 // Difficulty caps how many total atoms a recipe can need (so "hard" is the
-// only tier that ever draws the 5-atom CH4) and tightens the drop-zone
-// tolerance so placement itself gets less forgiving too.
+// only tier that ever draws the 5-atom CH4 as a regular level) and tightens
+// the drop-zone tolerance so placement itself gets less forgiving too.
 const DIFFICULTY = {
   easy: { maxAtoms: 3, zoneRadius: 0.28 },
   medium: { maxAtoms: 4, zoneRadius: 0.22 },
   hard: { maxAtoms: 99, zoneRadius: 0.16 }
 };
 
+const MAX_LIVES = 3;
+const BOSS_ZONE_SCALE = 0.75; // the mystery molecule's drop zone is tighter than a normal level's
 const RESPAWN_DELAY = 500;
+const BEST_SCORE_PREFIX = "ale.chemistryGame.best";
 
 function totalAtoms(recipe) {
   return Object.values(recipe.counts).reduce((sum, n) => sum + n, 0);
@@ -96,37 +99,59 @@ function recipePool(topic, difficulty) {
   return filtered.length ? filtered : all;
 }
 
+// The Boss Round's "mystery molecule" is the biggest recipe in the whole
+// topic (unfiltered by difficulty) — the one regular levels at this
+// difficulty never draw, built in a tighter drop zone.
+function bossRecipe(topic) {
+  const all = RECIPES.filter((r) => r.topic === topic);
+  return all.reduce((biggest, r) => (totalAtoms(r) > totalAtoms(biggest) ? r : biggest), all[0]);
+}
+
+function loadBest(topic, difficulty) {
+  try { return Number(sessionStorage.getItem(`${BEST_SCORE_PREFIX}.${topic}.${difficulty}`)) || 0; }
+  catch { return 0; }
+}
+function saveBest(topic, difficulty, value) {
+  try { sessionStorage.setItem(`${BEST_SCORE_PREFIX}.${topic}.${difficulty}`, String(value)); } catch { /* ignore */ }
+}
+
 /**
- * Chemistry — "Snap-Together Molecules". Pedestals within arm's reach keep
- * offering H, O, C and N atoms; grab one and place it in the glowing
- * assembly zone. Atoms you drop there stay and get counted live; get the
- * exact mix the target molecule needs and the loose atoms snap into the
- * real bonded shape, with its real geometry and a fact about it.
+ * Chemistry — "Snap-Together Molecules". An alchemist's order list: brew
+ * every molecule in the chosen topic's pool by grabbing atoms from the
+ * pedestals and placing them in the glowing assembly zone, then a Boss
+ * Round asks for the topic's biggest "mystery molecule" in a tighter drop
+ * zone. Three lives — a missed placement or an overshot element costs one.
  */
-export function createGame({ grab, config = {} }) {
+export function createGame({ interaction, grab, config = {} }) {
   const group = new THREE.Group();
   group.name = "chemistryGame";
 
   const topic = config.topic ?? "diatomic";
   const difficulty = config.difficulty ?? "easy";
   const pool = recipePool(topic, difficulty);
-  const ZONE_RADIUS = (DIFFICULTY[difficulty] ?? DIFFICULTY.easy).zoneRadius;
+  const boss = bossRecipe(topic);
+  const baseZoneRadius = (DIFFICULTY[difficulty] ?? DIFFICULTY.easy).zoneRadius;
+  const bestScore = loadBest(topic, difficulty);
 
-  let recipeIndex = 0;
+  let levelIndex = 0; // index into `pool` — the current non-boss level
+  let isBoss = false;
+  let lives = MAX_LIVES;
   let solved = 0;
+  let runOver = false;
   let locked = false;
   let popAnim = null; // { model, t } — elastic pop-in scale animation for a freshly completed molecule
   const timers = new Set();
   const zoneAtoms = []; // { symbol, mesh }
   const pedestalAtoms = new Map(); // symbol -> currently-offered grabbable mesh
   const worldPos = new THREE.Vector3();
+  let victoryButton = null;
 
   // --- Panels ---------------------------------------------------------------
   const targetPanel = createTextPanel({ width: 1.55, height: 0.56, fontSize: 40 });
   targetPanel.position.set(0, 2.0, -2.0);
   group.add(targetPanel);
 
-  const benchPanel = createTextPanel({ width: 1.05, height: 0.34, fontSize: 30, border: "rgba(34, 211, 238, 0.8)" });
+  const benchPanel = createTextPanel({ width: 1.05, height: 0.42, fontSize: 26, border: "rgba(34, 211, 238, 0.8)" });
   benchPanel.position.set(1.35, 1.6, -1.9);
   benchPanel.rotation.y = -0.4;
   group.add(benchPanel);
@@ -142,7 +167,7 @@ export function createGame({ grab, config = {} }) {
   group.add(zone);
 
   const zoneRing = new THREE.Mesh(
-    new THREE.TorusGeometry(ZONE_RADIUS, 0.015, 12, 48),
+    new THREE.TorusGeometry(baseZoneRadius, 0.015, 12, 48),
     new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x22d3ee, emissiveIntensity: 0.4 })
   );
   zoneRing.rotation.x = Math.PI / 2;
@@ -151,11 +176,15 @@ export function createGame({ grab, config = {} }) {
   const assembly = new THREE.Group(); // holds either loose zoneAtoms or the final bonded model
   zone.add(assembly);
 
+  function zoneRadius() {
+    return isBoss ? baseZoneRadius * BOSS_ZONE_SCALE : baseZoneRadius;
+  }
+
   function flashZone(color) {
     zoneRing.material.color.setHex(color);
     zoneRing.material.emissiveIntensity = 1.2;
     later(400, () => {
-      zoneRing.material.color.setHex(0x22d3ee);
+      zoneRing.material.color.setHex(isBoss ? 0xf472b6 : 0x22d3ee);
       zoneRing.material.emissiveIntensity = 0.4;
     });
   }
@@ -197,6 +226,7 @@ export function createGame({ grab, config = {} }) {
 
     grab.add(atom, {
       onGrab: () => {
+        if (runOver) return;
         pedestalAtoms.delete(symbol + stand.uuid);
         atom.material.emissiveIntensity = 0.7;
         atom.getWorldPosition(worldPos);
@@ -215,17 +245,22 @@ export function createGame({ grab, config = {} }) {
   symbols.forEach((symbol, i) => spawnPedestalAtom(symbol, pedestals[i]));
 
   // --- Helpers ----------------------------------------------------------------
-  const recipe = () => pool[recipeIndex % pool.length];
+  const recipe = () => (isBoss ? boss : pool[levelIndex]);
 
   function later(ms, fn) {
     const id = setTimeout(() => { timers.delete(id); fn(); }, ms);
     timers.add(id);
+    return id;
   }
 
   function currentCounts() {
     const counts = {};
     for (const a of zoneAtoms) counts[a.symbol] = (counts[a.symbol] ?? 0) + 1;
     return counts;
+  }
+
+  function heartsText() {
+    return "♥".repeat(Math.max(lives, 0)) + "♡".repeat(MAX_LIVES - Math.max(lives, 0));
   }
 
   function refreshPanels() {
@@ -235,14 +270,16 @@ export function createGame({ grab, config = {} }) {
     const have = Object.entries(r.counts)
       .map(([s, n]) => `${s}: ${counts[s] ?? 0}/${n}`)
       .join("   ");
+    const levelLabel = isBoss ? "MYSTERY MOLECULE" : `Order ${levelIndex + 1} / ${pool.length}`;
     targetPanel.userData.setText([
-      { text: `Build: ${r.formula} — ${r.name}`, bold: true, size: 40 },
-      { text: need, size: 26, color: "#8fa3c8" },
-      { text: `Molecules made: ${solved}`, size: 24, color: "#34d399" }
+      { text: isBoss ? "Boss: brew it from the formula alone!" : `Build: ${r.formula} — ${r.name}`, bold: true, size: isBoss ? 32 : 40, color: isBoss ? "#f472b6" : "#e8ecf6" },
+      { text: isBoss ? r.formula : need, size: 26, color: "#8fa3c8" },
+      { text: levelLabel, size: 22, color: isBoss ? "#f472b6" : "#34d399" }
     ]);
     benchPanel.userData.setText([
-      { text: "In the zone", size: 24, color: "#8fa3c8" },
-      { text: have || "empty", bold: true, size: 30, color: "#22d3ee" }
+      { text: "In the zone", size: 22, color: "#8fa3c8" },
+      { text: have || "empty", bold: true, size: 28, color: "#22d3ee" },
+      { text: `${heartsText()}   Score ${solved}   Best ${bestScore}`, size: 18, color: "#f87171" }
     ]);
   }
 
@@ -258,11 +295,26 @@ export function createGame({ grab, config = {} }) {
     });
   }
 
+  function discardAtom(atom) {
+    atom.geometry.dispose();
+    atom.material.dispose();
+    atom.parent?.remove(atom);
+  }
+
+  function loseLife(lines) {
+    lives -= 1;
+    refreshPanels();
+    if (lives <= 0) {
+      setFeedback(lines);
+      later(600, showDefeat);
+    } else {
+      setFeedback(lines);
+    }
+  }
+
   function handleAtomRelease(symbol, atom) {
-    if (locked) {
-      atom.parent?.remove(atom);
-      atom.geometry.dispose();
-      atom.material.dispose();
+    if (locked || runOver) {
+      discardAtom(atom);
       return;
     }
 
@@ -270,12 +322,11 @@ export function createGame({ grab, config = {} }) {
     const zoneWorld = zone.getWorldPosition(new THREE.Vector3());
     const dist = worldPos.distanceTo(zoneWorld);
 
-    if (dist > ZONE_RADIUS) {
+    if (dist > zoneRadius()) {
       // Missed the zone — this atom is spent (the pedestal already has a
-      // fresh one on the way), just remove it rather than track a rack slot.
-      atom.geometry.dispose();
-      atom.material.dispose();
-      atom.parent?.remove(atom);
+      // fresh one on the way); costs a life since precision is the point.
+      discardAtom(atom);
+      loseLife([{ text: "Missed the zone!", bold: true, size: 30, color: "#f87171" }]);
       return;
     }
 
@@ -283,14 +334,12 @@ export function createGame({ grab, config = {} }) {
     const wouldBe = (currentCounts()[symbol] ?? 0) + 1;
     if (wouldBe > (r.counts[symbol] ?? 0)) {
       flashZone(0xf87171);
-      setFeedback([
-        { text: `Too much ${ELEMENTS[symbol].name}!`, bold: true, size: 30, color: "#f87171" },
-        { text: `${r.formula} only needs ${r.counts[symbol] ?? 0}`, size: 24, color: "#8fa3c8" }
-      ]);
       spawnBurst(zone, { position: zone.worldToLocal(worldPos.clone()), colors: ["#f87171"], count: 10, speed: 0.8, size: 0.018, life: 0.35 });
-      atom.geometry.dispose();
-      atom.material.dispose();
-      atom.parent?.remove(atom);
+      discardAtom(atom);
+      loseLife([
+        { text: `Too much ${ELEMENTS[symbol].name}!`, bold: true, size: 30, color: "#f87171" },
+        { text: `${r.formula} only needs ${r.counts[symbol] ?? 0}`, size: 22, color: "#8fa3c8" }
+      ]);
       return;
     }
 
@@ -298,7 +347,7 @@ export function createGame({ grab, config = {} }) {
     atom.material.emissiveIntensity = 0.2;
     zoneAtoms.push({ symbol, mesh: atom });
     layoutZoneAtoms();
-    flashZone(0x34d399);
+    flashZone(isBoss ? 0xf472b6 : 0x34d399);
     spawnBurst(zone, { position: atom.position.clone(), colors: [hexColor(ELEMENTS[symbol].color)], count: 12, speed: 0.7, size: 0.018, life: 0.4 });
     refreshPanels();
 
@@ -350,24 +399,106 @@ export function createGame({ grab, config = {} }) {
     assembly.add(model);
     popAnim = { model, t: 0 };
     solved += 1;
+
+    const colors = [...new Set(Object.keys(r.counts))].map((s) => hexColor(ELEMENTS[s].color));
+    spawnShockwave(zone, { position: new THREE.Vector3(0, 0, 0), color: isBoss ? "#f472b6" : "#22d3ee", radius: isBoss ? 0.95 : 0.7 });
+    spawnBurst(zone, { position: new THREE.Vector3(0, 0.05, 0), colors, count: isBoss ? 60 : 40, speed: isBoss ? 2.6 : 2, life: 0.8 });
+
+    if (isBoss) {
+      setFeedback([
+        { text: `You brewed ${r.formula}!`, bold: true, size: 34, color: "#34d399" },
+        { text: r.fact, size: 22 }
+      ]);
+      later(700, () => { assembly.remove(model); disposeTree(model); showVictory(); });
+      return;
+    }
+
     setFeedback([
       { text: `You built ${r.formula}!`, bold: true, size: 34, color: "#34d399" },
       { text: r.fact, size: 22 }
     ]);
     refreshPanels();
 
-    const colors = [...new Set(Object.keys(r.counts))].map((s) => hexColor(ELEMENTS[s].color));
-    spawnShockwave(zone, { position: new THREE.Vector3(0, 0, 0), color: "#22d3ee", radius: 0.7 });
-    spawnBurst(zone, { position: new THREE.Vector3(0, 0.05, 0), colors, count: 40, speed: 2, life: 0.8 });
-
-    later(3200, () => {
+    later(3000, () => {
       assembly.remove(model);
       disposeTree(model);
-      recipeIndex += 1;
       locked = false;
+
+      if (levelIndex >= pool.length - 1) {
+        isBoss = true;
+        zoneRing.geometry.dispose();
+        zoneRing.geometry = new THREE.TorusGeometry(zoneRadius(), 0.015, 12, 48);
+        setFeedback([{ text: "MYSTERY MOLECULE — tighter zone, no hints!", bold: true, size: 28, color: "#f472b6" }]);
+      } else {
+        levelIndex += 1;
+        setFeedback([{ text: `Next order: ${recipe().formula}`, size: 28 }]);
+      }
       refreshPanels();
-      setFeedback([{ text: `Next up: ${recipe().formula}`, size: 28 }]);
     });
+  }
+
+  function showBanner(lines) {
+    targetPanel.userData.setText(lines);
+    setFeedback([{ text: "", size: 1 }]);
+  }
+
+  function showDefeat() {
+    runOver = true;
+    showBanner([
+      { text: "Out of hearts", bold: true, size: 44, color: "#f87171" },
+      { text: `You brewed ${solved} molecules — try again?`, size: 24, color: "#8fa3c8" }
+    ]);
+    showReplayButton("Retry ↻", 0xf87171);
+  }
+
+  function showVictory() {
+    runOver = true;
+    const stars = lives >= 3 ? "★★★" : lives === 2 ? "★★☆" : "★☆☆";
+    const newBest = solved > bestScore;
+    if (newBest) saveBest(topic, difficulty, solved);
+
+    showBanner([
+      { text: "QUEST COMPLETE! 🎉", bold: true, size: 40, color: "#34d399" },
+      { text: stars, size: 36, color: "#fbbf24" },
+      { text: `${solved} molecules${newBest ? "  — New best!" : `   Best ${Math.max(solved, bestScore)}`}`, size: 22, color: "#8fa3c8" }
+    ]);
+    showReplayButton("Play Again ▶", 0x34d399);
+  }
+
+  function showReplayButton(label, accent) {
+    victoryButton = createButton3D(label, { width: 0.5, height: 0.17, accent: `#${accent.toString(16).padStart(6, "0")}`, fontSize: 42 });
+    victoryButton.position.set(0, 1.35, -0.55);
+    group.add(victoryButton);
+    interaction.add(victoryButton, {
+      onSelect: resetRun,
+      onHoverStart: victoryButton.userData.onHoverStart,
+      onHoverEnd: victoryButton.userData.onHoverEnd
+    });
+  }
+
+  function clearReplayButton() {
+    if (!victoryButton) return;
+    interaction.remove(victoryButton);
+    group.remove(victoryButton);
+    disposeTree(victoryButton);
+    victoryButton = null;
+  }
+
+  function resetRun() {
+    clearReplayButton();
+    levelIndex = 0;
+    isBoss = false;
+    lives = MAX_LIVES;
+    solved = 0;
+    runOver = false;
+    locked = false;
+    zoneRing.geometry.dispose();
+    zoneRing.geometry = new THREE.TorusGeometry(zoneRadius(), 0.015, 12, 48);
+    setFeedback([
+      { text: "Grab atoms from the pedestals", size: 26 },
+      { text: "and place them in the ring", size: 26, color: "#8fa3c8" }
+    ]);
+    refreshPanels();
   }
 
   refreshPanels();
@@ -395,6 +526,7 @@ export function createGame({ grab, config = {} }) {
     dispose() {
       timers.forEach(clearTimeout);
       for (const [, atom] of pedestalAtoms) grab.remove(atom);
+      clearReplayButton();
       disposeTree(group);
     }
   };
@@ -404,6 +536,6 @@ export const meta = {
   id: "chemistry",
   title: "Snap-Together Molecules",
   tagline: "Build it atom by atom, with your hands",
-  howTo: "The board shows a target molecule. Grab atoms from the pedestals and place them into the glowing ring — get the exact mix and watch it snap into the real bonded shape.",
+  howTo: "An alchemist's order list: brew every molecule in the topic, then a Boss Round asks for the topic's biggest 'mystery molecule' in a tighter drop zone. Three hearts — a miss or an overshot element costs one.",
   topics: TOPICS
 };
