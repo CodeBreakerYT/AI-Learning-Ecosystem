@@ -2,9 +2,23 @@ import * as THREE from "three";
 import { createTextPanel, disposeTree } from "../../core/textPanel.js";
 import { spawnBurst, spawnShockwave, createTrail } from "../../core/effects.js";
 
-const GRAVITY = 9.81;
 const THROW_BOOST = 1.7; // amplifies tracked hand speed so a natural toss covers game-scale distance
 const MIN_THROW_SPEED = 0.5; // below this, a "release" just drops the ball rather than counting as a throw
+
+// Each "topic" is really a different gravity — same throw, different planet,
+// so players can feel g change the range formula's result directly.
+const TOPICS = [
+  { id: "earth", label: "Earth Gravity", g: 9.81 },
+  { id: "moon", label: "Moon Gravity", g: 1.62 },
+  { id: "mars", label: "Mars Gravity", g: 3.71 }
+];
+
+// Difficulty scales how far/small the target is and how forgiving a "hit" is.
+const DIFFICULTY = {
+  easy: { minDist: 1.0, maxDist: 2.0, ringScale: 1.35, tolerance: 1.35 },
+  medium: { minDist: 1.6, maxDist: 3.2, ringScale: 1.0, tolerance: 1.0 },
+  hard: { minDist: 2.4, maxDist: 4.4, ringScale: 0.7, tolerance: 0.75 }
+};
 
 /**
  * Physics — "Throw the Ball". Grab the ball from its stand and actually
@@ -14,9 +28,13 @@ const MIN_THROW_SPEED = 0.5; // below this, a "release" just drops the ball rath
  * the range formula, so the physics is something you did, not a slider
  * you nudged.
  */
-export function createGame({ grab }) {
+export function createGame({ grab, config = {} }) {
   const group = new THREE.Group();
   group.name = "physicsGame";
+
+  const topicMeta = TOPICS.find((t) => t.id === config.topic) ?? TOPICS[0];
+  const GRAVITY = topicMeta.g;
+  const diff = DIFFICULTY[config.difficulty] ?? DIFFICULTY.easy;
 
   let attempts = 0;
   let hits = 0;
@@ -74,11 +92,12 @@ export function createGame({ grab }) {
     return ring;
   });
   rings.forEach((ring, i) => { ring.position.y = 0.004 + i * 0.002; });
+  target.scale.setScalar(diff.ringScale);
   group.add(target);
 
   let targetDistance = 2;
   function placeTarget() {
-    targetDistance = 1.6 + Math.random() * 2.4; // 1.6–4m ahead, reachable by a real throw
+    targetDistance = diff.minDist + Math.random() * (diff.maxDist - diff.minDist);
     target.position.set((Math.random() - 0.5) * 1.2, 0, stand.position.z - targetDistance);
   }
 
@@ -91,9 +110,10 @@ export function createGame({ grab }) {
   lessonPanel.position.set(-1.35, 1.55, -1.9);
   lessonPanel.rotation.y = 0.4;
   lessonPanel.userData.setText([
-    { text: "Projectile motion", bold: true, size: 32, color: "#a78bfa" },
-    { text: "Range = v² · sin(2θ) / g", size: 30 },
-    { text: "45° carries farthest!", size: 24, color: "#8fa3c8" }
+    { text: topicMeta.label, bold: true, size: 32, color: "#a78bfa" },
+    { text: `g = ${GRAVITY.toFixed(2)} m/s²`, size: 30 },
+    { text: "Range = v² · sin(2θ) / g", size: 26 },
+    { text: "45° carries farthest!", size: 22, color: "#8fa3c8" }
   ]);
   group.add(lessonPanel);
 
@@ -174,10 +194,11 @@ export function createGame({ grab }) {
     const landingSpot = ball.position.clone();
     landingSpot.y = 0.006;
 
-    if (missBy <= 0.5) {
+    const hitRadius = 0.5 * diff.tolerance;
+    if (missBy <= hitRadius) {
       hits += 1;
-      const bullseye = missBy <= 0.18;
-      const quality = bullseye ? "BULLSEYE! 🎯" : missBy <= 0.35 ? "Great throw!" : "Hit!";
+      const bullseye = missBy <= 0.18 * diff.tolerance;
+      const quality = bullseye ? "BULLSEYE! 🎯" : missBy <= 0.35 * diff.tolerance ? "Great throw!" : "Hit!";
       setFeedback([{ text: quality, bold: true, size: 36, color: "#34d399" }]);
       spawnShockwave(group, { position: landingSpot, color: "#34d399", radius: bullseye ? 0.9 : 0.6 });
       spawnBurst(group, {
@@ -251,5 +272,6 @@ export const meta = {
   id: "physics",
   title: "Throw the Ball",
   tagline: "Feel gravity in your own hands",
-  howTo: "Grab the ball off its stand and physically throw it at the target rings on the floor — your real throw's angle and speed drive the same range formula real projectiles follow."
+  howTo: "Grab the ball off its stand and physically throw it at the target rings on the floor — your real throw's angle and speed drive the same range formula real projectiles follow.",
+  topics: TOPICS
 };

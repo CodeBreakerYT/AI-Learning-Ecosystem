@@ -6,6 +6,57 @@ const BLOCK_COLORS = [0x5b8cff, 0x22d3ee, 0xa78bfa, 0xf472b6];
 const BASKET_RADIUS = 0.22;
 const RETURN_SPEED = 6; // how fast a dropped-outside block eases back to its rack slot
 
+const TOPICS = [
+  { id: "addition", label: "Addition", symbol: "+" },
+  { id: "subtraction", label: "Subtraction", symbol: "−" },
+  { id: "multiplication", label: "Multiplication", symbol: "×" },
+  { id: "mixed", label: "Mixed Review", symbol: "±×" }
+];
+
+// Number ranges and distractor spread per difficulty — hard both uses
+// bigger operands AND crowds the wrong answers closer to the real one, so
+// scanning-for-the-biggest-block stops working as a strategy.
+const DIFFICULTY = {
+  easy: { add: [1, 9], sub: [5, 15], mul: [1, 5], distractor: [1, 3] },
+  medium: { add: [8, 40], sub: [15, 50], mul: [3, 9], distractor: [2, 6] },
+  hard: { add: [25, 99], sub: [40, 120], mul: [6, 12], distractor: [3, 9] }
+};
+
+function randomInt(min, max) {
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+function generateQuestion(topic, difficulty) {
+  const ranges = DIFFICULTY[difficulty] ?? DIFFICULTY.easy;
+  const resolvedTopic = topic === "mixed"
+    ? ["addition", "subtraction", "multiplication"][randomInt(0, 2)]
+    : topic;
+
+  let a, b, op, answer;
+  if (resolvedTopic === "subtraction") {
+    const [lo, hi] = ranges.sub;
+    a = randomInt(lo, hi);
+    b = randomInt(1, a);
+    op = "−";
+    answer = a - b;
+  } else if (resolvedTopic === "multiplication") {
+    const [lo, hi] = ranges.mul;
+    a = randomInt(lo, hi);
+    b = randomInt(lo, hi);
+    op = "×";
+    answer = a * b;
+  } else {
+    const [lo, hi] = ranges.add;
+    a = randomInt(lo, hi);
+    b = randomInt(lo, hi);
+    op = "+";
+    answer = a + b;
+  }
+
+  const topicMeta = TOPICS.find((t) => t.id === resolvedTopic);
+  return { a, b, op, answer, topicLabel: topicMeta?.label ?? "Maths", distractorRange: ranges.distractor };
+}
+
 /**
  * Maths — "Block Toss". A number block sits within arm's reach for each
  * possible answer; grab one and physically drop it into the glowing basket
@@ -13,9 +64,12 @@ const RETURN_SPEED = 6; // how fast a dropped-outside block eases back to its ra
  * so you can try again. Difficulty ramps from addition to subtraction to
  * multiplication as your score grows.
  */
-export function createGame({ grab }) {
+export function createGame({ grab, config = {} }) {
   const group = new THREE.Group();
   group.name = "mathGame";
+
+  const topic = config.topic ?? "addition";
+  const difficulty = config.difficulty ?? "easy";
 
   let score = 0;
   let streak = 0;
@@ -139,34 +193,21 @@ export function createGame({ grab }) {
     feedbackPanel.userData.setText([{ text, color, size: 32 }]);
   }
 
-  function randomInt(min, max) {
-    return min + Math.floor(Math.random() * (max - min + 1));
-  }
-
   let correctAnswer = 0;
 
   function nextQuestion() {
-    let a, b, op, answer, topic;
-    if (score < 3) {
-      [a, b, op, topic] = [randomInt(1, 9), randomInt(1, 9), "+", "Addition"];
-      answer = a + b;
-    } else if (score < 6) {
-      a = randomInt(5, 18); b = randomInt(1, a); op = "−"; topic = "Subtraction";
-      answer = a - b;
-    } else {
-      [a, b, op, topic] = [randomInt(2, 9), randomInt(2, 9), "×", "Multiplication"];
-      answer = a * b;
-    }
+    const { a, b, op, answer, topicLabel, distractorRange } = generateQuestion(topic, difficulty);
     correctAnswer = answer;
 
     questionPanel.userData.setText([
-      { text: topic, size: 26, color: "#8fa3c8" },
+      { text: topicLabel, size: 26, color: "#8fa3c8" },
       { text: `${a} ${op} ${b} = ?`, bold: true, size: 68 }
     ]);
 
+    const [distLo, distHi] = distractorRange;
     const values = new Set([answer]);
     while (values.size < 4) {
-      const offset = randomInt(1, 4) * (Math.random() < 0.5 ? -1 : 1);
+      const offset = randomInt(distLo, distHi) * (Math.random() < 0.5 ? -1 : 1);
       const candidate = answer + offset;
       if (candidate >= 0) values.add(candidate);
     }
@@ -273,5 +314,6 @@ export const meta = {
   id: "maths",
   title: "Block Toss",
   tagline: "Grab it, toss it, solve it",
-  howTo: "Read the equation, then grab the block with the right answer and drop it into the glowing basket. Miss and it eases back so you can try again. Three levels: add, subtract, multiply."
+  howTo: "Read the equation, then grab the block with the right answer and drop it into the glowing basket. Miss and it eases back so you can try again.",
+  topics: TOPICS
 };

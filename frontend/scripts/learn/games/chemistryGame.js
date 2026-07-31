@@ -20,28 +20,34 @@ const ELEMENTS = {
 
 // Each recipe: required atom counts, a display formula, a fun fact, and the
 // 3D arrangement (center atom + satellite directions) used to assemble the
-// molecule model on success.
+// molecule model on success. `topic` groups it for the topic selector.
 const RECIPES = [
   {
-    formula: "H₂O", name: "Water", counts: { H: 2, O: 1 },
-    fact: "Bent shape (104.5°) — that's why water is polar!",
-    center: "O",
-    satellites: [{ el: "H", dir: [0.8, 0.55, 0] }, { el: "H", dir: [-0.8, 0.55, 0] }]
+    formula: "H₂", name: "Hydrogen gas", counts: { H: 2 }, topic: "diatomic",
+    fact: "The lightest, most abundant element in the universe.",
+    center: "H",
+    satellites: [{ el: "H", dir: [1, 0, 0] }]
   },
   {
-    formula: "O₂", name: "Oxygen gas", counts: { O: 2 },
+    formula: "O₂", name: "Oxygen gas", counts: { O: 2 }, topic: "diatomic",
     fact: "The air you breathe is 21% O₂ — a double-bonded pair.",
     center: "O",
     satellites: [{ el: "O", dir: [1, 0, 0] }]
   },
   {
-    formula: "CO₂", name: "Carbon dioxide", counts: { C: 1, O: 2 },
+    formula: "H₂O", name: "Water", counts: { H: 2, O: 1 }, topic: "compounds",
+    fact: "Bent shape (104.5°) — that's why water is polar!",
+    center: "O",
+    satellites: [{ el: "H", dir: [0.8, 0.55, 0] }, { el: "H", dir: [-0.8, 0.55, 0] }]
+  },
+  {
+    formula: "CO₂", name: "Carbon dioxide", counts: { C: 1, O: 2 }, topic: "compounds",
     fact: "Linear molecule — you exhale it with every breath.",
     center: "C",
     satellites: [{ el: "O", dir: [1, 0, 0] }, { el: "O", dir: [-1, 0, 0] }]
   },
   {
-    formula: "NH₃", name: "Ammonia", counts: { N: 1, H: 3 },
+    formula: "NH₃", name: "Ammonia", counts: { N: 1, H: 3 }, topic: "compounds",
     fact: "Pyramid shape — the lone pair pushes the H atoms down.",
     center: "N",
     satellites: [
@@ -51,7 +57,7 @@ const RECIPES = [
     ]
   },
   {
-    formula: "CH₄", name: "Methane", counts: { C: 1, H: 4 },
+    formula: "CH₄", name: "Methane", counts: { C: 1, H: 4 }, topic: "compounds",
     fact: "A perfect tetrahedron — the main gas in natural gas.",
     center: "C",
     satellites: [
@@ -63,8 +69,32 @@ const RECIPES = [
   }
 ];
 
-const ZONE_RADIUS = 0.22;
+const TOPICS = [
+  { id: "diatomic", label: "Diatomic Molecules" },
+  { id: "compounds", label: "Everyday Compounds" }
+];
+
+// Difficulty caps how many total atoms a recipe can need (so "hard" is the
+// only tier that ever draws the 5-atom CH4) and tightens the drop-zone
+// tolerance so placement itself gets less forgiving too.
+const DIFFICULTY = {
+  easy: { maxAtoms: 3, zoneRadius: 0.28 },
+  medium: { maxAtoms: 4, zoneRadius: 0.22 },
+  hard: { maxAtoms: 99, zoneRadius: 0.16 }
+};
+
 const RESPAWN_DELAY = 500;
+
+function totalAtoms(recipe) {
+  return Object.values(recipe.counts).reduce((sum, n) => sum + n, 0);
+}
+
+function recipePool(topic, difficulty) {
+  const diff = DIFFICULTY[difficulty] ?? DIFFICULTY.easy;
+  const all = RECIPES.filter((r) => r.topic === topic);
+  const filtered = all.filter((r) => totalAtoms(r) <= diff.maxAtoms);
+  return filtered.length ? filtered : all;
+}
 
 /**
  * Chemistry — "Snap-Together Molecules". Pedestals within arm's reach keep
@@ -73,9 +103,14 @@ const RESPAWN_DELAY = 500;
  * exact mix the target molecule needs and the loose atoms snap into the
  * real bonded shape, with its real geometry and a fact about it.
  */
-export function createGame({ grab }) {
+export function createGame({ grab, config = {} }) {
   const group = new THREE.Group();
   group.name = "chemistryGame";
+
+  const topic = config.topic ?? "diatomic";
+  const difficulty = config.difficulty ?? "easy";
+  const pool = recipePool(topic, difficulty);
+  const ZONE_RADIUS = (DIFFICULTY[difficulty] ?? DIFFICULTY.easy).zoneRadius;
 
   let recipeIndex = 0;
   let solved = 0;
@@ -180,7 +215,7 @@ export function createGame({ grab }) {
   symbols.forEach((symbol, i) => spawnPedestalAtom(symbol, pedestals[i]));
 
   // --- Helpers ----------------------------------------------------------------
-  const recipe = () => RECIPES[recipeIndex % RECIPES.length];
+  const recipe = () => pool[recipeIndex % pool.length];
 
   function later(ms, fn) {
     const id = setTimeout(() => { timers.delete(id); fn(); }, ms);
@@ -369,5 +404,6 @@ export const meta = {
   id: "chemistry",
   title: "Snap-Together Molecules",
   tagline: "Build it atom by atom, with your hands",
-  howTo: "The board shows a target molecule. Grab atoms from the pedestals and place them into the glowing ring — get the exact mix and watch it snap into the real bonded shape."
+  howTo: "The board shows a target molecule. Grab atoms from the pedestals and place them into the glowing ring — get the exact mix and watch it snap into the real bonded shape.",
+  topics: TOPICS
 };

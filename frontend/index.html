@@ -13,6 +13,15 @@
   <canvas id="scene-canvas"></canvas>
   <div class="bg-glow"></div>
 
+  <div id="route-loader" class="route-loader" aria-hidden="true">
+    <div class="route-loader-grid"></div>
+    <div class="route-loader-horizon"></div>
+    <div class="route-loader-core">
+      <div class="route-loader-ring"></div>
+      <p class="route-loader-label" id="route-loader-label">Loading…</p>
+    </div>
+  </div>
+
   <nav id="ui-nav" class="ui-overlay">
     <div class="ui-brand">
       <img src="/assets/ui/logo.svg" alt="logo" class="ui-logo" />
@@ -102,6 +111,19 @@
         <button type="button" class="learn-tab" data-subject="physics">🚀 Physics</button>
         <button type="button" class="learn-tab" data-subject="chemistry">⚗️ Chemistry</button>
       </div>
+
+      <div class="learn-setup" id="learn-setup" hidden>
+        <div class="learn-setup-group">
+          <span class="learn-setup-label">Topic</span>
+          <div class="learn-chip-row" id="learn-topic-options"></div>
+        </div>
+        <div class="learn-setup-group">
+          <span class="learn-setup-label">Difficulty</span>
+          <div class="learn-chip-row" id="learn-difficulty-options"></div>
+        </div>
+        <button type="button" id="learn-start-btn" class="btn btn-primary btn-small learn-start-btn">Start ▶</button>
+      </div>
+
       <h3 id="learn-title">Pick a subject to start its minigame</h3>
       <p id="learn-desc">Each game runs in the 3D room behind this panel — playable with the mouse here, or with your controllers in VR.</p>
       <div class="learn-actions">
