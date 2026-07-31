@@ -51,10 +51,10 @@ const ZONES = [
 ];
 
 const CREATURES = [
-  { file: "Flamingo.glb", targetSize: 0.6, extra: 1 },
-  { file: "Parrot.glb", targetSize: 0.32, extra: 1 },
-  { file: "Stork.glb", targetSize: 0.7, extra: 0 },
-  { file: "Horse.glb", targetSize: 1.5, extra: 0 }
+  { file: "Flamingo.glb", targetSize: 0.6, extra: 2 },
+  { file: "Parrot.glb", targetSize: 0.32, extra: 2 },
+  { file: "Stork.glb", targetSize: 0.7, extra: 1 },
+  { file: "Horse.glb", targetSize: 1.5, extra: 1 }
 ];
 
 const NPC_LINES = [
@@ -359,8 +359,16 @@ function buildTree(x, z) {
 }
 
 function buildForest() {
-  for (let i = 0; i < 30; i++) {
-    const spot = randomFreeSpot(9, 26, 1.2);
+  const placed = [];
+  for (let i = 0; i < 46; i++) {
+    let spot = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidate = randomFreeSpot(6, 26, 1.0);
+      const tooClose = placed.some((p) => Math.hypot(candidate.x - p.x, candidate.z - p.z) < 1.3);
+      if (!tooClose) { spot = candidate; break; }
+      spot = candidate; // last attempt still gets used even if a bit close — rare, not worth an infinite loop
+    }
+    placed.push(spot);
     worldGroup.add(buildTree(spot.x, spot.z));
   }
 }
@@ -692,7 +700,7 @@ function loadCreatures() {
   let spotIndex = 0;
 
   function place(model) {
-    const spot = randomFreeSpot(9, 24);
+    const spot = randomFreeSpot(6, 24);
     // x/z only — fitAndGround() already set position.y so the model's feet
     // sit exactly on the ground; overwriting it with spot.y (always 0) would
     // undo that and sink/float the model depending on its rest origin.
@@ -781,19 +789,21 @@ function addQuestMarker(model, symbol, color) {
   return marker;
 }
 
-// Loads Soldier.glb once and spawns every human character from it — the
+// Loads Xbot.glb once and spawns every human character from it — the
 // ambient village/camp NPCs, the market vendor, and the story guide —
-// instead of re-downloading the same asset per role.
+// instead of re-downloading the same asset per role. Xbot (not Soldier) is
+// deliberately used here: it's a plain civilian mannequin, not armor, so it
+// actually reads as a person instead of a combat robot.
 function loadCast() {
   const loader = new GLTFLoader();
   return new Promise((resolve) => {
     loader.load(
-      `${import.meta.env.BASE_URL}assets/models/world/Soldier.glb`,
+      `${import.meta.env.BASE_URL}assets/models/world/Xbot.glb`,
       (gltf) => {
         if (disposed) { resolve(); return; }
-        const clipFor = (name) => gltf.animations.find((c) => c.name === name);
-        const idleClip = clipFor("Idle") ?? gltf.animations[0];
-        const walkClip = clipFor("Walk") ?? gltf.animations[0];
+        const clipFor = (name) => gltf.animations.find((c) => c.name.toLowerCase() === name);
+        const idleClip = clipFor("idle") ?? gltf.animations[0];
+        const walkClip = clipFor("walk") ?? gltf.animations[0];
 
         function spawnCharacter(spawnPos, { radius = 2.5, speed = 0.35, dialogue = null, tint = null, marker = null } = {}) {
           const model = cloneSkinned(gltf.scene);
@@ -849,7 +859,7 @@ function loadCast() {
         resolve();
       },
       undefined,
-      (err) => { console.warn("Couldn't load Soldier.glb:", err.message); resolve(); }
+      (err) => { console.warn("Couldn't load Xbot.glb:", err.message); resolve(); }
     );
   });
 }
@@ -1454,6 +1464,44 @@ function applyKeyboardLocomotion(delta) {
   xrState.rig.position.add(keyDirection);
 }
 
+// Desktop-only look-around: right-click drag rotates the view (left-click
+// drag is already grabSystem's grab gesture, so this deliberately uses the
+// other mouse button to never conflict with it). Without this, a desktop
+// player facing whichever way they last walked can never see anything
+// that isn't directly ahead — the village/camp/forest/mountains are all
+// already built, they're just invisible without a way to turn and look.
+let lookActive = false;
+let lookLastX = 0;
+let lookLastY = 0;
+let cameraPitch = 0;
+const MOUSE_LOOK_SPEED = 0.0028;
+const MAX_PITCH = 1.3; // radians, just short of straight up/down
+
+function handleContextMenu(event) { event.preventDefault(); }
+
+function handleLookPointerDown(event) {
+  if (event.button !== 2 || xrState.renderer.xr.isPresenting) return;
+  lookActive = true;
+  lookLastX = event.clientX;
+  lookLastY = event.clientY;
+}
+
+function handleLookPointerMove(event) {
+  if (!lookActive) return;
+  const dx = event.clientX - lookLastX;
+  const dy = event.clientY - lookLastY;
+  lookLastX = event.clientX;
+  lookLastY = event.clientY;
+  xrState.rig.rotation.y -= dx * MOUSE_LOOK_SPEED;
+  cameraPitch = THREE.MathUtils.clamp(cameraPitch - dy * MOUSE_LOOK_SPEED, -MAX_PITCH, MAX_PITCH);
+  xrState.camera.rotation.x = cameraPitch;
+}
+
+function handleLookPointerUp(event) {
+  if (event.button !== 2) return;
+  lookActive = false;
+}
+
 export function mount(scene) {
   sceneRef = scene;
   disposed = false;
@@ -1519,6 +1567,12 @@ export function mount(scene) {
   document.addEventListener("keydown", handleKeyDown);
   document.addEventListener("keyup", handleKeyUp);
 
+  cameraPitch = 0;
+  xrState.renderer.domElement.addEventListener("contextmenu", handleContextMenu);
+  xrState.renderer.domElement.addEventListener("pointerdown", handleLookPointerDown);
+  window.addEventListener("pointermove", handleLookPointerMove);
+  window.addEventListener("pointerup", handleLookPointerUp);
+
   updateFn = (delta) => {
     elapsed += delta;
     interaction.update();
@@ -1564,6 +1618,13 @@ export function unmount() {
   document.removeEventListener("keydown", handleKeyDown);
   document.removeEventListener("keyup", handleKeyUp);
   keysDown.clear();
+
+  xrState.renderer.domElement.removeEventListener("contextmenu", handleContextMenu);
+  xrState.renderer.domElement.removeEventListener("pointerdown", handleLookPointerDown);
+  window.removeEventListener("pointermove", handleLookPointerMove);
+  window.removeEventListener("pointerup", handleLookPointerUp);
+  lookActive = false;
+  xrState.camera.rotation.x = 0; // shared camera object — don't leak a tilted view into other pages
 
   const btn = enterVRBtn();
   if (btn) btn.onclick = null;
