@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { createTextPanel, disposeTree } from "../../core/textPanel.js";
+import { spawnBurst, spawnShockwave, createTrail } from "../../core/effects.js";
 
 const GRAVITY = 9.81;
 const THROW_BOOST = 1.7; // amplifies tracked hand speed so a natural toss covers game-scale distance
@@ -43,9 +44,14 @@ export function createGame({ grab }) {
   stand.add(ball);
   let ballHome = true; // sitting on the stand, as opposed to flying loose in `scene`
 
+  const trail = createTrail(group, { color: 0xfbbf24 });
+
   grab.add(ball, {
     onGrab: () => {
       ball.material.emissiveIntensity = 0.8;
+      ball.getWorldPosition(worldPos);
+      const localPos = group.worldToLocal(worldPos.clone());
+      spawnBurst(group, { position: localPos, colors: ["#fbbf24"], count: 8, speed: 0.6, life: 0.3, size: 0.02 });
     },
     onRelease: (obj, releaseVelocity) => throwBall(releaseVelocity),
     onHoverStart: () => { if (ballHome) ball.scale.setScalar(1.25); },
@@ -145,6 +151,7 @@ export function createGame({ grab }) {
     ball.position.copy(startLocalPos);
     velocity.copy(startVelocity);
     flying = true;
+    trail.reset();
 
     const horizontalSpeed = Math.hypot(startVelocity.x, startVelocity.z);
     const angle = THREE.MathUtils.radToDeg(Math.atan2(startVelocity.y, horizontalSpeed));
@@ -156,20 +163,37 @@ export function createGame({ grab }) {
 
   function land() {
     flying = false;
+    trail.reset();
+    // Quick squash-and-recover on impact instead of just stopping dead.
+    ball.scale.set(1.5, 0.5, 1.5);
+    later(120, () => ball.scale.setScalar(1));
+
     const dx = ball.position.x - target.position.x;
     const dz = ball.position.z - target.position.z;
     const missBy = Math.sqrt(dx * dx + dz * dz);
+    const landingSpot = ball.position.clone();
+    landingSpot.y = 0.006;
 
     if (missBy <= 0.5) {
       hits += 1;
-      const quality = missBy <= 0.18 ? "BULLSEYE! 🎯" : missBy <= 0.35 ? "Great throw!" : "Hit!";
+      const bullseye = missBy <= 0.18;
+      const quality = bullseye ? "BULLSEYE! 🎯" : missBy <= 0.35 ? "Great throw!" : "Hit!";
       setFeedback([{ text: quality, bold: true, size: 36, color: "#34d399" }]);
+      spawnShockwave(group, { position: landingSpot, color: "#34d399", radius: bullseye ? 0.9 : 0.6 });
+      spawnBurst(group, {
+        position: landingSpot,
+        colors: bullseye ? ["#34d399", "#fbbf24", "#22d3ee"] : ["#34d399", "#8fa3c8"],
+        count: bullseye ? 44 : 26,
+        speed: bullseye ? 2.2 : 1.6,
+        life: 0.7
+      });
       later(1300, () => { placeTarget(); resetBall(); });
     } else {
       setFeedback([
         { text: `Missed by ${missBy.toFixed(1)} m`, size: 30, color: "#f87171" },
         { text: "Try a different angle or power", size: 24, color: "#8fa3c8" }
       ]);
+      spawnBurst(group, { position: landingSpot, colors: ["#5b6478"], count: 10, speed: 0.7, size: 0.02, life: 0.4 });
       later(1300, resetBall);
     }
   }
@@ -198,6 +222,8 @@ export function createGame({ grab }) {
   return {
     group,
     update(delta) {
+      target.rotation.y += delta * 0.15; // idle motion so the target doesn't feel static
+
       if (!flying) return;
 
       // The ball flies in `group` local space (group never moves relative to
@@ -205,6 +231,7 @@ export function createGame({ grab }) {
       // and keeps target/ball comparisons in the same coordinate frame).
       velocity.y -= GRAVITY * delta;
       ball.position.addScaledVector(velocity, delta);
+      trail.sample(ball.position);
 
       if (ball.position.y <= 0.06 && velocity.y < 0) {
         ball.position.y = 0.06;
@@ -213,6 +240,7 @@ export function createGame({ grab }) {
     },
     dispose() {
       timers.forEach(clearTimeout);
+      trail.dispose();
       grab.remove(ball);
       disposeTree(group);
     }

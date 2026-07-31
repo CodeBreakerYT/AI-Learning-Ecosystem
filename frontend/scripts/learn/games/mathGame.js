@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { createTextPanel, createLabel, disposeTree } from "../../core/textPanel.js";
+import { spawnBurst, spawnShockwave } from "../../core/effects.js";
 
 const BLOCK_COLORS = [0x5b8cff, 0x22d3ee, 0xa78bfa, 0xf472b6];
 const BASKET_RADIUS = 0.22;
@@ -106,6 +107,11 @@ export function createGame({ grab }) {
         block.userData.held = true;
         block.userData.returning = false;
         cube.material.emissiveIntensity = 0.6;
+        spawnBurst(group, {
+          position: block.position.clone(),
+          colors: [`#${BLOCK_COLORS[i].toString(16).padStart(6, "0")}`],
+          count: 8, speed: 0.5, size: 0.015, life: 0.3
+        });
       },
       onRelease: () => {
         block.userData.held = false;
@@ -202,12 +208,29 @@ export function createGame({ grab }) {
       flashBasket(0x34d399);
       setFeedback(streak >= 3 ? `Nice! ${streak} in a row 🔥` : "Correct!", "#34d399");
       updateScore();
+
+      const onFire = streak >= 3;
+      spawnShockwave(group, { position: basket.position.clone(), color: "#34d399", radius: onFire ? 0.75 : 0.55 });
+      spawnBurst(group, {
+        position: basket.position.clone().add(new THREE.Vector3(0, 0.08, 0)),
+        colors: onFire
+          ? BLOCK_COLORS.map((c) => `#${c.toString(16).padStart(6, "0")}`)
+          : ["#34d399", "#8fa3c8"],
+        count: onFire ? 42 : 24,
+        speed: onFire ? 2.1 : 1.5,
+        life: 0.7
+      });
+
       later(900, nextQuestion);
     } else {
       streak = 0;
       flashBasket(0xf87171);
       setFeedback(`${block.userData.value} isn't it — grab another!`, "#f87171");
       updateScore();
+      spawnBurst(group, {
+        position: basket.position.clone().add(new THREE.Vector3(0, 0.08, 0)),
+        colors: ["#f87171"], count: 12, speed: 0.9, size: 0.02, life: 0.4
+      });
       block.userData.resolved = false;
       later(500, () => { block.userData.returning = true; });
     }
@@ -234,6 +257,7 @@ export function createGame({ grab }) {
         } else if (block.visible && !block.userData.resolved && !block.userData.held) {
           block.rotation.y += delta * 0.6;
           block.position.y = block.userData.home.y + Math.sin(elapsed * 1.6 + block.userData.home.x * 5) * 0.015;
+          block.userData.cube.material.emissiveIntensity = 0.2 + Math.sin(elapsed * 3 + block.userData.home.x * 5) * 0.1;
         }
       }
     },

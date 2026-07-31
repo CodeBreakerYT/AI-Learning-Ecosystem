@@ -1515,11 +1515,9 @@ export function mount(scene) {
   kitchenLocked = false;
   kitchenZoneAtoms = [];
 
-  const floor = scene.getObjectByName("floor");
-  const grid = scene.getObjectByName("grid");
+  const baseEnv = scene.getObjectByName("baseEnvironment");
   const demoCube = scene.getObjectByName("demoCube");
-  if (floor) floor.visible = false;
-  if (grid) grid.visible = false;
+  if (baseEnv) baseEnv.visible = false;
   if (demoCube) demoCube.visible = false;
 
   // Shadows are scoped to this route only, so Learn/other pages' render
@@ -1664,13 +1662,11 @@ export function unmount() {
   audioCtx = null;
 
   xrState.renderer.shadowMap.enabled = false;
-  sceneRef.fog = null;
+  sceneRef.fog = sceneRef.userData.baseFog ?? null;
 
-  const floor = sceneRef.getObjectByName("floor");
-  const grid = sceneRef.getObjectByName("grid");
+  const baseEnv = sceneRef.getObjectByName("baseEnvironment");
   const demoCube = sceneRef.getObjectByName("demoCube");
-  if (floor) floor.visible = true;
-  if (grid) grid.visible = true;
+  if (baseEnv) baseEnv.visible = true;
   if (demoCube) demoCube.visible = true;
 
   if (questLogPanel) {

@@ -1,5 +1,15 @@
 import * as THREE from "three";
 import { createTextPanel, createLabel, disposeTree } from "../../core/textPanel.js";
+import { spawnBurst, spawnShockwave } from "../../core/effects.js";
+
+function hexColor(n) {
+  return `#${n.toString(16).padStart(6, "0")}`;
+}
+
+function easeOutBack(t) {
+  const c1 = 1.70158, c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
 
 const ELEMENTS = {
   H: { name: "Hydrogen", color: 0xf5f7fa, radius: 0.05 },
@@ -70,6 +80,7 @@ export function createGame({ grab }) {
   let recipeIndex = 0;
   let solved = 0;
   let locked = false;
+  let popAnim = null; // { model, t } — elastic pop-in scale animation for a freshly completed molecule
   const timers = new Set();
   const zoneAtoms = []; // { symbol, mesh }
   const pedestalAtoms = new Map(); // symbol -> currently-offered grabbable mesh
@@ -153,6 +164,11 @@ export function createGame({ grab }) {
       onGrab: () => {
         pedestalAtoms.delete(symbol + stand.uuid);
         atom.material.emissiveIntensity = 0.7;
+        atom.getWorldPosition(worldPos);
+        spawnBurst(group, {
+          position: group.worldToLocal(worldPos.clone()),
+          colors: [hexColor(el.color)], count: 8, speed: 0.5, size: 0.015, life: 0.3
+        });
         later(RESPAWN_DELAY, () => spawnPedestalAtom(symbol, stand));
       },
       onRelease: () => handleAtomRelease(symbol, atom),
@@ -236,6 +252,7 @@ export function createGame({ grab }) {
         { text: `Too much ${ELEMENTS[symbol].name}!`, bold: true, size: 30, color: "#f87171" },
         { text: `${r.formula} only needs ${r.counts[symbol] ?? 0}`, size: 24, color: "#8fa3c8" }
       ]);
+      spawnBurst(zone, { position: zone.worldToLocal(worldPos.clone()), colors: ["#f87171"], count: 10, speed: 0.8, size: 0.018, life: 0.35 });
       atom.geometry.dispose();
       atom.material.dispose();
       atom.parent?.remove(atom);
@@ -247,6 +264,7 @@ export function createGame({ grab }) {
     zoneAtoms.push({ symbol, mesh: atom });
     layoutZoneAtoms();
     flashZone(0x34d399);
+    spawnBurst(zone, { position: atom.position.clone(), colors: [hexColor(ELEMENTS[symbol].color)], count: 12, speed: 0.7, size: 0.018, life: 0.4 });
     refreshPanels();
 
     const matches = Object.keys(ELEMENTS).every((s) => (r.counts[s] ?? 0) === (currentCounts()[s] ?? 0));
@@ -293,13 +311,19 @@ export function createGame({ grab }) {
     zoneAtoms.length = 0;
 
     const model = buildMoleculeModel(r);
+    model.scale.setScalar(0.001);
     assembly.add(model);
+    popAnim = { model, t: 0 };
     solved += 1;
     setFeedback([
       { text: `You built ${r.formula}!`, bold: true, size: 34, color: "#34d399" },
       { text: r.fact, size: 22 }
     ]);
     refreshPanels();
+
+    const colors = [...new Set(Object.keys(r.counts))].map((s) => hexColor(ELEMENTS[s].color));
+    spawnShockwave(zone, { position: new THREE.Vector3(0, 0, 0), color: "#22d3ee", radius: 0.7 });
+    spawnBurst(zone, { position: new THREE.Vector3(0, 0.05, 0), colors, count: 40, speed: 2, life: 0.8 });
 
     later(3200, () => {
       assembly.remove(model);
@@ -326,6 +350,12 @@ export function createGame({ grab }) {
       zoneRing.rotation.z += delta * 0.4;
       if (locked) assembly.rotation.y += delta * 0.8;
       else assembly.rotation.y = 0;
+
+      if (popAnim) {
+        popAnim.t += delta * 2.4;
+        popAnim.model.scale.setScalar(Math.max(0.001, easeOutBack(Math.min(popAnim.t, 1))));
+        if (popAnim.t >= 1) popAnim = null;
+      }
     },
     dispose() {
       timers.forEach(clearTimeout);
