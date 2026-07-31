@@ -4,7 +4,11 @@ import { spawnBurst, spawnShockwave } from "../../core/effects.js";
 
 const BLOCK_COLORS = [0x5b8cff, 0x22d3ee, 0xa78bfa, 0xf472b6];
 const BASKET_RADIUS = 0.22;
-const RETURN_SPEED = 6; // how fast a dropped-outside block eases back to its rack slot
+const RETURN_SPEED = 6; // how fast a missed block eases back to its rack slot
+const GRAVITY = 9.81;
+const THROW_BOOST = 1.6; // amplifies tracked hand speed so a natural toss carries to the basket
+const MIN_THROW_SPEED = 0.4; // below this, a "release" just drops the block rather than throwing it
+const FLOOR_Y = 0.07; // ~half the block's size — local-space resting height once it misses everything
 
 const TOPICS = [
   { id: "addition", label: "Addition", symbol: "+" },
@@ -119,7 +123,11 @@ export function createGame({ interaction, grab, config = {} }) {
 
   // --- Basket (the goal you toss blocks into) --------------------------------
   const basket = new THREE.Group();
-  basket.position.set(0, 0.95, -0.55);
+  // Height/depth tuned so the basket sits inside the default forward camera
+  // view (no built-in pitch control on desktop) as well as comfortable VR
+  // reach — a chest-height object this close to the camera falls well
+  // outside a 70°-FOV frustum if placed at true waist height.
+  basket.position.set(0, 1.26, -0.65);
   group.add(basket);
 
   const basketRing = new THREE.Mesh(
@@ -155,7 +163,7 @@ export function createGame({ interaction, grab, config = {} }) {
   const blocks = [];
   for (let i = 0; i < 4; i++) {
     const block = new THREE.Group();
-    const homeLocal = new THREE.Vector3(-0.33 + i * 0.22, 1.08, -0.32);
+    const homeLocal = new THREE.Vector3(-0.18 + i * 0.12, 1.34, -0.45);
     block.position.copy(homeLocal);
 
     const cube = new THREE.Mesh(
@@ -177,7 +185,11 @@ export function createGame({ interaction, grab, config = {} }) {
     labelBack.rotation.y = Math.PI;
     block.add(labelBack);
 
-    block.userData = { cube, label, labelBack, home: homeLocal, value: 0, returning: false, resolved: false, held: false };
+    block.userData = {
+      cube, label, labelBack, home: homeLocal, value: 0,
+      returning: false, resolved: false, held: false, flying: false,
+      velocity: new THREE.Vector3()
+    };
     group.add(block);
     blocks.push(block);
 
@@ -186,6 +198,7 @@ export function createGame({ interaction, grab, config = {} }) {
         if (runOver) return;
         block.userData.held = true;
         block.userData.returning = false;
+        block.userData.flying = false;
         cube.material.emissiveIntensity = 0.6;
         spawnBurst(group, {
           position: block.position.clone(),
@@ -193,11 +206,11 @@ export function createGame({ interaction, grab, config = {} }) {
           count: 8, speed: 0.5, size: 0.015, life: 0.3
         });
       },
-      onRelease: () => {
+      onRelease: (obj, releaseVelocity) => {
         block.userData.held = false;
-        handleRelease(block);
+        throwBlock(block, releaseVelocity);
       },
-      onHoverStart: () => { if (!block.userData.returning) cube.scale.setScalar(1.15); },
+      onHoverStart: () => { if (!block.userData.returning && !block.userData.flying) cube.scale.setScalar(1.15); },
       onHoverEnd: () => cube.scale.setScalar(1)
     });
   }
@@ -252,6 +265,8 @@ export function createGame({ interaction, grab, config = {} }) {
       setBlockValue(block, shuffled[i]);
       block.userData.resolved = false;
       block.userData.returning = false;
+      block.userData.flying = false;
+      block.userData.velocity.set(0, 0, 0);
       block.position.copy(block.userData.home);
       block.userData.cube.material.emissiveIntensity = 0.2;
       block.visible = true;
@@ -320,17 +335,21 @@ export function createGame({ interaction, grab, config = {} }) {
     }
   }
 
-  function handleRelease(block) {
-    if (locked || block.userData.resolved || runOver) return;
-    const worldPos = block.getWorldPosition(new THREE.Vector3());
-    const basketWorld = basket.getWorldPosition(new THREE.Vector3());
-    const dist = worldPos.distanceTo(basketWorld);
-
-    if (dist > BASKET_RADIUS) {
+  function throwBlock(block, releaseVelocity) {
+    if (locked || block.userData.resolved || runOver) {
       block.userData.returning = true;
       return;
     }
+    const speed = releaseVelocity.length();
+    block.userData.flying = true;
+    block.userData.velocity.copy(releaseVelocity).multiplyScalar(speed < MIN_THROW_SPEED ? 1 : THROW_BOOST);
+  }
 
+  // Called every frame a block is flying, once it's either crossed into the
+  // basket (a hit — right or wrong) or hit the floor (a clean miss, no
+  // penalty, it just eases back to the rack).
+  function resolveBasketEntry(block) {
+    block.userData.flying = false;
     block.userData.resolved = true;
     block.userData.cube.material.emissiveIntensity = 1.2;
 
@@ -465,17 +484,45 @@ export function createGame({ interaction, grab, config = {} }) {
       basketRing.rotation.z += delta * 0.5;
 
       for (const block of blocks) {
-        if (block.userData.returning) {
-          localPos.copy(block.userData.home);
-          block.position.lerp(localPos, Math.min(1, RETURN_SPEED * delta));
-          if (block.position.distanceTo(block.userData.home) < 0.01) {
-            block.position.copy(block.userData.home);
-            block.userData.returning = false;
+        const ud = block.userData;
+        if (ud.held) {
+          continue; // grabSystem drives position while held
+        }
+
+        if (ud.flying) {
+          if (runOver) continue; // let the run end without fighting a still-airborne block
+          ud.velocity.y -= GRAVITY * delta;
+          block.position.addScaledVector(ud.velocity, delta);
+          block.rotation.x += delta * 4;
+          block.rotation.z += delta * 3;
+
+          if (!locked) {
+            const dx = block.position.x - basket.position.x;
+            const dz = block.position.z - basket.position.z;
+            const horizDist = Math.hypot(dx, dz);
+            const crossingBasket = block.position.y <= basket.position.y && ud.velocity.y < 0;
+            if (crossingBasket && horizDist <= BASKET_RADIUS) {
+              resolveBasketEntry(block);
+              continue;
+            }
           }
-        } else if (block.visible && !block.userData.resolved && !block.userData.held) {
+          if (block.position.y <= FLOOR_Y && ud.velocity.y < 0) {
+            // Missed the basket entirely — no penalty, just ease back to the rack.
+            block.position.y = FLOOR_Y;
+            ud.flying = false;
+            if (!ud.resolved) ud.returning = true;
+          }
+        } else if (ud.returning) {
+          localPos.copy(ud.home);
+          block.position.lerp(localPos, Math.min(1, RETURN_SPEED * delta));
+          if (block.position.distanceTo(ud.home) < 0.01) {
+            block.position.copy(ud.home);
+            ud.returning = false;
+          }
+        } else if (block.visible && !ud.resolved) {
           block.rotation.y += delta * 0.6;
-          block.position.y = block.userData.home.y + Math.sin(elapsed * 1.6 + block.userData.home.x * 5) * 0.015;
-          block.userData.cube.material.emissiveIntensity = 0.2 + Math.sin(elapsed * 3 + block.userData.home.x * 5) * 0.1;
+          block.position.y = ud.home.y + Math.sin(elapsed * 1.6 + ud.home.x * 5) * 0.015;
+          ud.cube.material.emissiveIntensity = 0.2 + Math.sin(elapsed * 3 + ud.home.x * 5) * 0.1;
         }
       }
     },

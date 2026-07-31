@@ -87,6 +87,11 @@ const MAX_LIVES = 3;
 const BOSS_ZONE_SCALE = 0.75; // the mystery molecule's drop zone is tighter than a normal level's
 const RESPAWN_DELAY = 500;
 const BEST_SCORE_PREFIX = "ale.chemistryGame.best";
+const GRAVITY = 9.81;
+const THROW_BOOST = 1.5; // amplifies tracked hand speed so a natural toss carries to the zone
+const MIN_THROW_SPEED = 0.4; // below this, a "release" just drops the atom rather than throwing it
+const CAPTURE_HEIGHT_TOLERANCE = 0.12; // how far above the zone's own height still counts as "arrived"
+const FLOOR_Y = 0.04; // local-space floor — an atom that reaches this without being captured is lost
 
 function totalAtoms(recipe) {
   return Object.values(recipe.counts).reduce((sum, n) => sum + n, 0);
@@ -143,6 +148,7 @@ export function createGame({ interaction, grab, config = {} }) {
   const timers = new Set();
   const zoneAtoms = []; // { symbol, mesh }
   const pedestalAtoms = new Map(); // symbol -> currently-offered grabbable mesh
+  const flyingAtoms = new Set(); // atoms currently airborne (thrown, not yet captured/landed)
   const worldPos = new THREE.Vector3();
   let victoryButton = null;
 
@@ -163,7 +169,11 @@ export function createGame({ interaction, grab, config = {} }) {
 
   // --- Assembly zone (where placed atoms bond) --------------------------------
   const zone = new THREE.Group();
-  zone.position.set(0, 1.0, -0.55);
+  // Height/depth tuned so the zone sits inside the default forward camera
+  // view (no built-in pitch control on desktop) as well as comfortable VR
+  // reach — a chest-height object this close to the camera falls well
+  // outside a 70°-FOV frustum if placed at true waist height.
+  zone.position.set(0, 1.26, -0.65);
   group.add(zone);
 
   const zoneRing = new THREE.Mesh(
@@ -197,7 +207,11 @@ export function createGame({ interaction, grab, config = {} }) {
   const symbols = Object.keys(ELEMENTS);
   const pedestals = symbols.map((symbol, i) => {
     const stand = new THREE.Group();
-    stand.position.set(-0.45 + i * 0.3, 0.75, -0.3);
+    // Height tuned so the atom on top (local +0.32) sits inside the default
+    // forward camera view (no built-in pitch control on desktop) as well as
+    // comfortable VR reach — a chest-height grab point this close to the
+    // camera falls well outside a 70°-FOV frustum if placed at true waist height.
+    stand.position.set(-0.24 + i * 0.16, 1.05, -0.4);
     pedestalRoot.add(stand);
 
     const post = new THREE.Mesh(
@@ -227,16 +241,23 @@ export function createGame({ interaction, grab, config = {} }) {
     grab.add(atom, {
       onGrab: () => {
         if (runOver) return;
-        pedestalAtoms.delete(symbol + stand.uuid);
+        if (flyingAtoms.has(atom)) {
+          // Caught mid-throw — stop its physics and let grabSystem's
+          // followHand take over. A replacement was already scheduled when
+          // it first left the pedestal, so don't schedule a second one.
+          flyingAtoms.delete(atom);
+        } else {
+          pedestalAtoms.delete(symbol + stand.uuid);
+          later(RESPAWN_DELAY, () => spawnPedestalAtom(symbol, stand));
+        }
         atom.material.emissiveIntensity = 0.7;
         atom.getWorldPosition(worldPos);
         spawnBurst(group, {
           position: group.worldToLocal(worldPos.clone()),
           colors: [hexColor(el.color)], count: 8, speed: 0.5, size: 0.015, life: 0.3
         });
-        later(RESPAWN_DELAY, () => spawnPedestalAtom(symbol, stand));
       },
-      onRelease: () => handleAtomRelease(symbol, atom),
+      onRelease: (obj, releaseVelocity) => throwAtom(symbol, atom, releaseVelocity),
       onHoverStart: () => atom.scale.setScalar(1.25),
       onHoverEnd: () => atom.scale.setScalar(1)
     });
@@ -296,6 +317,13 @@ export function createGame({ interaction, grab, config = {} }) {
   }
 
   function discardAtom(atom) {
+    // grab.add() was called once when this atom was offered on its pedestal
+    // — without removing it here too, every thrown atom leaves a stale,
+    // disposed-but-still-registered entry in the shared grab system for the
+    // rest of the session (it'd keep computing hover distance against it
+    // every frame even though it's no longer in the scene at all).
+    grab.remove(atom);
+    flyingAtoms.delete(atom);
     atom.geometry.dispose();
     atom.material.dispose();
     atom.parent?.remove(atom);
@@ -312,29 +340,32 @@ export function createGame({ interaction, grab, config = {} }) {
     }
   }
 
-  function handleAtomRelease(symbol, atom) {
+  // Launches a released atom as a real gravity-affected projectile instead
+  // of resolving it instantly — resolveAtomPlacement() only fires once its
+  // flight path actually carries it into the zone (checked every frame in
+  // update()), and a throw that never reaches the zone just falls and is lost.
+  function throwAtom(symbol, atom, releaseVelocity) {
     if (locked || runOver) {
       discardAtom(atom);
       return;
     }
-
     atom.getWorldPosition(worldPos);
-    const zoneWorld = zone.getWorldPosition(new THREE.Vector3());
-    const dist = worldPos.distanceTo(zoneWorld);
+    const localPos = group.worldToLocal(worldPos.clone());
+    group.add(atom); // re-parent from the pedestal stand into the game's shared physics space
+    atom.position.copy(localPos);
 
-    if (dist > zoneRadius()) {
-      // Missed the zone — this atom is spent (the pedestal already has a
-      // fresh one on the way); costs a life since precision is the point.
-      discardAtom(atom);
-      loseLife([{ text: "Missed the zone!", bold: true, size: 30, color: "#f87171" }]);
-      return;
-    }
+    const speed = releaseVelocity.length();
+    atom.userData.symbol = symbol;
+    atom.userData.velocity = releaseVelocity.clone().multiplyScalar(speed < MIN_THROW_SPEED ? 1 : THROW_BOOST);
+    flyingAtoms.add(atom);
+  }
 
+  function resolveAtomPlacement(symbol, atom) {
     const r = recipe();
     const wouldBe = (currentCounts()[symbol] ?? 0) + 1;
     if (wouldBe > (r.counts[symbol] ?? 0)) {
       flashZone(0xf87171);
-      spawnBurst(zone, { position: zone.worldToLocal(worldPos.clone()), colors: ["#f87171"], count: 10, speed: 0.8, size: 0.018, life: 0.35 });
+      spawnBurst(zone, { position: zone.worldToLocal(atom.getWorldPosition(new THREE.Vector3())), colors: ["#f87171"], count: 10, speed: 0.8, size: 0.018, life: 0.35 });
       discardAtom(atom);
       loseLife([
         { text: `Too much ${ELEMENTS[symbol].name}!`, bold: true, size: 30, color: "#f87171" },
@@ -343,7 +374,7 @@ export function createGame({ interaction, grab, config = {} }) {
       return;
     }
 
-    assembly.add(atom);
+    assembly.attach(atom); // attach() (not add()) preserves the atom's current world position across the reparent
     atom.material.emissiveIntensity = 0.2;
     zoneAtoms.push({ symbol, mesh: atom });
     layoutZoneAtoms();
@@ -517,6 +548,31 @@ export function createGame({ interaction, grab, config = {} }) {
       if (locked) assembly.rotation.y += delta * 0.8;
       else assembly.rotation.y = 0;
 
+      for (const atom of [...flyingAtoms]) {
+        if (runOver) { discardAtom(atom); continue; }
+        const ud = atom.userData;
+        ud.velocity.y -= GRAVITY * delta;
+        atom.position.addScaledVector(ud.velocity, delta);
+        atom.rotation.x += delta * 3;
+        atom.rotation.y += delta * 2;
+
+        const dx = atom.position.x - zone.position.x;
+        const dz = atom.position.z - zone.position.z;
+        const horizDist = Math.hypot(dx, dz);
+        const arrived = atom.position.y <= zone.position.y + CAPTURE_HEIGHT_TOLERANCE;
+
+        if (!locked && horizDist <= zoneRadius() && arrived) {
+          flyingAtoms.delete(atom);
+          resolveAtomPlacement(ud.symbol, atom);
+          continue;
+        }
+        if (atom.position.y <= FLOOR_Y) {
+          flyingAtoms.delete(atom);
+          discardAtom(atom);
+          if (!locked) loseLife([{ text: "Missed the zone!", bold: true, size: 30, color: "#f87171" }]);
+        }
+      }
+
       if (popAnim) {
         popAnim.t += delta * 2.4;
         popAnim.model.scale.setScalar(Math.max(0.001, easeOutBack(Math.min(popAnim.t, 1))));
@@ -526,6 +582,8 @@ export function createGame({ interaction, grab, config = {} }) {
     dispose() {
       timers.forEach(clearTimeout);
       for (const [, atom] of pedestalAtoms) grab.remove(atom);
+      for (const atom of flyingAtoms) grab.remove(atom);
+      flyingAtoms.clear();
       clearReplayButton();
       disposeTree(group);
     }

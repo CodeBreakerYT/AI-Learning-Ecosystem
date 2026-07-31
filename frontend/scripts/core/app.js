@@ -152,12 +152,69 @@ for (let i = 0; i < 2; i++) {
   });
 }
 
+// --- Jump ---------------------------------------------------------------
+// A simple parabolic hop: Space on desktop, the A/X button in VR. Tracked
+// as a relative offset (jumpVelocity/jumpOffset) added on top of whatever
+// rig.position.y already is, rather than an absolute height — the VR floor
+// calibration above and the manual recenter both set rig.position.y
+// directly, and a jump mid-flight shouldn't fight or get clobbered by that.
+const JUMP_SPEED = 3.2;
+const JUMP_GRAVITY = 9.81;
+let jumpVelocity = 0;
+let jumpOffset = 0; // cumulative height added by the current jump, always >= 0
+
+function requestJump() {
+  if (jumpOffset > 0 || jumpVelocity !== 0) return; // already mid-jump
+  jumpVelocity = JUMP_SPEED;
+}
+
+window.addEventListener("keydown", (event) => {
+  if (event.code !== "Space" || event.repeat) return;
+  const tag = document.activeElement?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA") return; // don't hijack typing
+  requestJump();
+});
+
+// VR controllers don't expose button events the way squeeze/select do — poll
+// each frame and edge-detect the A/X button (index 4) per input source.
+const jumpButtonWasPressed = new Set();
+function pollVRJumpButton(session) {
+  if (!session) { jumpButtonWasPressed.clear(); return; }
+  for (const source of session.inputSources) {
+    const button = source.gamepad?.buttons?.[4];
+    if (!button) continue;
+    if (button.pressed && !jumpButtonWasPressed.has(source)) {
+      jumpButtonWasPressed.add(source);
+      requestJump();
+    } else if (!button.pressed) {
+      jumpButtonWasPressed.delete(source);
+    }
+  }
+}
+
 renderer.setAnimationLoop(() => {
   const delta = clock.getDelta();
   xrState.frameDelta = delta;
   demoCube.rotation.y += delta * 0.4;
   xrState.updatables.forEach((fn) => fn(delta));
-  moveRig(rig, camera, renderer.xr.getSession(), delta);
+  const session = renderer.xr.getSession();
+  moveRig(rig, camera, session, delta);
+  pollVRJumpButton(session);
+
+  if (jumpVelocity !== 0 || jumpOffset > 0) {
+    jumpVelocity -= JUMP_GRAVITY * delta;
+    const step = jumpVelocity * delta;
+    jumpOffset += step;
+    if (jumpOffset <= 0) {
+      // Landed — remove exactly the remaining offset so rig.position.y ends
+      // up back at whatever height it was before the jump started.
+      rig.position.y -= jumpOffset;
+      jumpOffset = 0;
+      jumpVelocity = 0;
+    } else {
+      rig.position.y += step;
+    }
+  }
 
   if (pendingCalibration) {
     if (calibrationFramesLeft > 0) {

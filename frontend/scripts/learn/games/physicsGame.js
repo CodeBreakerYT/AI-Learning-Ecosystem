@@ -75,7 +75,11 @@ export function createGame({ interaction, grab, config = {} }) {
 
   // --- Ball stand (grab point) ---------------------------------------------
   const stand = new THREE.Group();
-  stand.position.set(0, 0.95, -0.35);
+  // Height tuned so the ball sits inside the default forward camera view (no
+  // built-in pitch control on desktop) as well as comfortable VR reach — a
+  // chest-height grab point this close to the camera falls well outside a
+  // 70°-FOV frustum if placed at true waist height.
+  stand.position.set(0, 1.34, -0.45);
   group.add(stand);
 
   const pedestal = new THREE.Mesh(
