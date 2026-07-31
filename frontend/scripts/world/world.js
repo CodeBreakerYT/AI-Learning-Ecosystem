@@ -24,7 +24,12 @@ import { createPhysicsWorld } from "../core/physicsWorld.js";
  */
 
 const KEY_SPEED = 2.2; // desktop WASD speed, m/s — thumbstick locomotion (locomotion.js) covers VR
-const PLAYGROUND_CENTER = new THREE.Vector3(0, 0, -6);
+// The playground used to sit 6m from spawn — visible immediately, with no
+// NPC, building, or story reason to be there, which read as a minigame
+// dropped in an empty field rather than a real place. Moved to the south
+// edge of the village (a "village playground") so the player only reaches
+// it by following the guide there, same as the market and kitchen.
+const PLAYGROUND_CENTER = new THREE.Vector3(20, 0, -4);
 const CRATE_HALF = 0.22;
 const BARREL_RADIUS = 0.22;
 const BARREL_HEIGHT = 0.5;
