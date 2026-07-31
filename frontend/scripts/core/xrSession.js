@@ -5,7 +5,7 @@
 // real users (anyone opening the deployed site directly on their headset)
 // are in the first group, not the PC+Link group.
 function isRunningInHeadsetBrowser() {
-  return /OculusBrowser|Quest|PicoBrowser|VR Shell|Silk-Accelerated/i.test(navigator.userAgent);
+  return /OculusBrowser|Quest|PicoBrowser|VR Shell|Silk-Accelerated|Mobile VR|Horizon OS|MetaBrowser/i.test(navigator.userAgent);
 }
 
 /**
@@ -56,23 +56,9 @@ export async function connectVRSession(renderer, { onConnected, onEnded, onWaiti
     clearTimeout(waitTimer);
     if (err.name === "NotSupportedError") {
       if (isRunningInHeadsetBrowser()) {
-        throw new Error(
-          "This headset browser reports no VR support for this page. Try: " +
-          "(1) Make sure you're in the headset's own Browser app, not a link opened inside another app. " +
-          "(2) Update the headset's system software (Settings → System → Software Update). " +
-          "(3) Fully close and reopen the browser, then reload this page. " +
-          "You can also open /xr-check.html for a detailed diagnostic."
-        );
+        throw new Error("This headset reports no VR support. Try updating its system software — see /xr-check.html for details.");
       }
-      throw new Error(
-        "No VR headset detected by this desktop browser. Two ways to fix this: " +
-        "EASIEST — open this page directly in your headset's own browser instead (no PC needed at all). " +
-        "OR, if you're deliberately streaming from this PC via Quest Link/Air Link/SteamVR, check: " +
-        "(1) The Link app is running and the headset shows the Link home grid, not normal Quest home. " +
-        "(2) The Link app's Settings → General has it set as the active OpenXR runtime. " +
-        "(3) Restart the browser after changing the OpenXR runtime. " +
-        "You can also open /xr-check.html for a detailed diagnostic."
-      );
+      throw new Error("No headset found here — open this page in the headset's own browser instead. See /xr-check.html for details.");
     }
     if (err.name === "SecurityError") {
       throw new Error("VR is blocked here — the site must be opened over https:// (or localhost).");
