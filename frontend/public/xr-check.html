@@ -34,10 +34,12 @@
     // browser (no PC involved) — very different failure causes than a
     // desktop browser streaming to a headset via Link/Air Link/SteamVR, so
     // the guidance below has to know which one it's talking to.
-    const inHeadsetBrowser = /OculusBrowser|Quest|PicoBrowser|VR Shell|Silk-Accelerated/i.test(navigator.userAgent);
-    document.getElementById("context-hint").textContent = inHeadsetBrowser
-      ? "Detected: running inside a headset's own browser."
-      : "Detected: running in a desktop browser (not a headset browser).";
+    const inHeadsetBrowser = /OculusBrowser|Quest|PicoBrowser|VR Shell|Silk-Accelerated|Mobile VR|Horizon OS|MetaBrowser/i.test(navigator.userAgent);
+    document.getElementById("context-hint").innerHTML =
+      (inHeadsetBrowser
+        ? "Detected: running inside a headset's own browser."
+        : "Detected: running in a desktop browser (not a headset browser).") +
+      `<br><span style="font-size:0.75rem;opacity:0.7;word-break:break-all;">UA: ${navigator.userAgent}</span>`;
 
     function report(name, ok, hint) {
       const div = document.createElement("div");
