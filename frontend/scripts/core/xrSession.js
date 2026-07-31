@@ -1,3 +1,13 @@
+// True when the page itself is running inside a headset's own browser
+// (Meta Quest Browser, Pico Browser, etc.) rather than a desktop browser
+// streaming to the headset via Link/Air Link/SteamVR — the "no VR runtime"
+// error means something completely different for each audience, and most
+// real users (anyone opening the deployed site directly on their headset)
+// are in the first group, not the PC+Link group.
+function isRunningInHeadsetBrowser() {
+  return /OculusBrowser|Quest|PicoBrowser|VR Shell|Silk-Accelerated/i.test(navigator.userAgent);
+}
+
 /**
  * Requests an immersive-vr WebXR session directly via navigator.xr and hands
  * it to the Three.js renderer. Used by the "Attach" action on the vrSetup
@@ -45,12 +55,22 @@ export async function connectVRSession(renderer, { onConnected, onEnded, onWaiti
   } catch (err) {
     clearTimeout(waitTimer);
     if (err.name === "NotSupportedError") {
+      if (isRunningInHeadsetBrowser()) {
+        throw new Error(
+          "This headset browser reports no VR support for this page. Try: " +
+          "(1) Make sure you're in the headset's own Browser app, not a link opened inside another app. " +
+          "(2) Update the headset's system software (Settings → System → Software Update). " +
+          "(3) Fully close and reopen the browser, then reload this page. " +
+          "You can also open /xr-check.html for a detailed diagnostic."
+        );
+      }
       throw new Error(
-        "No VR headset detected by the browser. If your Quest is connected via Link/Air Link, check: " +
-        "(1) The Meta Quest Link app is running on this PC. " +
-        "(2) In the Meta Quest Link app → Settings → General, click 'Set Meta Quest Link as active OpenXR Runtime'. " +
-        "(3) Put on the headset and make sure Quest Link is active (you should see the Link home grid). " +
-        "(4) Restart Chrome after changing the OpenXR runtime. " +
+        "No VR headset detected by this desktop browser. Two ways to fix this: " +
+        "EASIEST — open this page directly in your headset's own browser instead (no PC needed at all). " +
+        "OR, if you're deliberately streaming from this PC via Quest Link/Air Link/SteamVR, check: " +
+        "(1) The Link app is running and the headset shows the Link home grid, not normal Quest home. " +
+        "(2) The Link app's Settings → General has it set as the active OpenXR runtime. " +
+        "(3) Restart the browser after changing the OpenXR runtime. " +
         "You can also open /xr-check.html for a detailed diagnostic."
       );
     }
