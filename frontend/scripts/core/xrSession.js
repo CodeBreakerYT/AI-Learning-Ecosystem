@@ -40,7 +40,7 @@ export async function connectVRSession(renderer, { onConnected, onEnded, onWaiti
   let session;
   try {
     session = await navigator.xr.requestSession("immersive-vr", {
-      optionalFeatures: ["local-floor", "bounded-floor", "hand-tracking"]
+      optionalFeatures: ["local-floor", "bounded-floor", "hand-tracking", "layers"]
     });
   } catch (err) {
     clearTimeout(waitTimer);

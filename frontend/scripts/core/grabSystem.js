@@ -113,7 +113,11 @@ export function createGrabSystem({ renderer, camera }) {
   }
 
   function onPointerDown(event) {
-    if (renderer.xr.isPresenting) return;
+    // Left-click only — right-click is reserved for camera-look (World's
+    // mouse-look), and without this check a right-click landing on a
+    // grabbable would also grab it, fighting with the look-drag started by
+    // that same click.
+    if (renderer.xr.isPresenting || event.button !== 0) return;
     updateMouseNDC(event);
     raycaster.setFromCamera(mouseNDC, camera);
     const roots = [...grabbables.keys()].filter((o) => o.visible !== false && !isHeldByAnyone(o));

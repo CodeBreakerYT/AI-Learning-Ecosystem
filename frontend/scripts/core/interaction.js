@@ -81,7 +81,10 @@ export function createInteractionManager({ renderer, camera }) {
   const onControllerSelect = (event) => trigger(aimController(event.target), event.data);
 
   function onPointerDown(event) {
-    if (renderer.xr.isPresenting) return;
+    // Left-click only — right-click is reserved for camera-look (World's
+    // mouse-look), and without this check a right-click landing on a
+    // button/NPC would also fire select the same as a real click.
+    if (renderer.xr.isPresenting || event.button !== 0) return;
     updateMouseNDC(event);
     trigger(aimMouse());
   }
