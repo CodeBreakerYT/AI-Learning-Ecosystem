@@ -196,6 +196,14 @@ let elapsed = 0;
 let questStage = "intro";
 let questLogPanel = null;
 let guideRoamer = null;
+// Playground (golf) and kitchen locations/props stay hidden and
+// non-interactive until the story actually reaches them, so the player
+// encounters one objective at a time by following the guide instead of
+// finding every minigame simultaneously visible from the start.
+let playgroundRamp = null;
+let playgroundRing = null;
+let playgroundResetBtn = null;
+let kitchenGroup = null;
 let marketCoins = []; // { mesh, body, home, value }
 let marketCorrectValue = 0;
 const marketBowlPos = new THREE.Vector3();
@@ -792,6 +800,30 @@ function advanceQuest(newStage) {
   setGuideDialogue();
   relocateGuide();
   refreshQuestLog();
+  updateStageVisibility();
+}
+
+// The order the story unlocks locations in: potatoes at the market first,
+// then the playground, then the kitchen. Objects for a not-yet-reached
+// location are hidden AND left ungrabbable (grabSystem/interaction both
+// skip anything with .visible === false) so the player can only ever act
+// on the current objective instead of stumbling onto a later one early.
+const STAGE_ORDER = { intro: 0, market: 0, golf: 1, kitchen: 2, complete: 3 };
+function updateStageVisibility() {
+  const order = STAGE_ORDER[questStage] ?? 0;
+  const playgroundUnlocked = order >= 1;
+  const kitchenUnlocked = order >= 2;
+
+  if (playgroundRamp) playgroundRamp.visible = playgroundUnlocked;
+  if (playgroundRing) playgroundRing.visible = playgroundUnlocked;
+  if (playgroundResetBtn) playgroundResetBtn.visible = playgroundUnlocked;
+  if (scoreboard) scoreboard.visible = playgroundUnlocked;
+  props.forEach((p) => {
+    if (p.kind === "crate" || p.kind === "barrel" || p.kind === "ball") p.mesh.visible = playgroundUnlocked;
+  });
+
+  if (kitchenGroup) kitchenGroup.visible = kitchenUnlocked;
+  kitchenIngredients.forEach((k) => { k.mesh.visible = kitchenUnlocked; });
 }
 
 function loadCreatures() {
@@ -1123,6 +1155,7 @@ function buildRamp() {
   ramp.castShadow = true;
   ramp.receiveShadow = true;
   worldGroup.add(ramp);
+  playgroundRamp = ramp;
 
   const rampBody = new CANNON.Body({ type: CANNON.Body.STATIC, material: physics.materials.ground });
   rampBody.addShape(new CANNON.Box(new CANNON.Vec3(0.8, 0.04, 0.5)));
@@ -1158,6 +1191,7 @@ function buildRing() {
   ring.add(well);
   worldGroup.add(ring);
   ringMarker = glow;
+  playgroundRing = ring;
 }
 
 function flashRing() {
@@ -1527,6 +1561,7 @@ function buildKitchen() {
   const group = new THREE.Group();
   group.position.set(KITCHEN_CENTER.x, 0, KITCHEN_CENTER.z);
   worldGroup.add(group);
+  kitchenGroup = group;
 
   const counter = new THREE.Mesh(
     new THREE.BoxGeometry(2.4, 0.9, 0.7),
@@ -1609,6 +1644,7 @@ function buildUI() {
   resetBtn.position.set(PLAYGROUND_CENTER.x + 0.9, 1.5, PLAYGROUND_CENTER.z + 2.6);
   resetBtn.lookAt(PLAYGROUND_CENTER.x + 0.9, 1.5, PLAYGROUND_CENTER.z + 4);
   worldGroup.add(resetBtn);
+  playgroundResetBtn = resetBtn;
   interaction.add(resetBtn, {
     onSelect: () => resetProps(),
     onHoverStart: resetBtn.userData.onHoverStart,
@@ -1968,6 +2004,7 @@ export function mount(scene) {
   buildMarket();
   buildKitchen();
   refreshScoreboard();
+  updateStageVisibility();
 
   butterflies = buildButterflies();
   worldGroup.add(butterflies.group);
