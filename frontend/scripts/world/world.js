@@ -37,6 +37,7 @@ const BALL_RADIUS = 0.13;
 const RING_CENTER = new THREE.Vector3(PLAYGROUND_CENTER.x + 3.6, 0, PLAYGROUND_CENTER.z + 1.6);
 const RING_RADIUS = 0.35;
 const RING_SETTLE_SPEED = 0.35; // below this speed, a prop inside the ring counts as "landed"
+const RING_GOAL = 3; // lands needed during the "golf" stage before the story advances
 const BEST_SCORE_KEY = "ale.world.bestRingScore";
 const COLLIDE_SOUND_MIN_SPEED = 1.2; // m/s of impact — below this, skip the thud (resting jitter)
 const COLLIDE_SOUND_COOLDOWN = 150; // ms, per body — avoids machine-gun buzz on a resting contact
@@ -57,6 +58,21 @@ const ZONES = [
   { center: MARKET_CENTER, radius: 4 },
   { center: KITCHEN_CENTER, radius: 4 },
   { center: SPAWN_HAMLET_CENTER, radius: 5 }
+];
+
+// Optional side content, no bearing on the main quest — gems tucked around
+// the world (by the river, near camp, out past the mountains) so there's a
+// reason to actually explore instead of only ever walking the direct paths
+// between quest markers. NPC flavor lines above hint at a few of these.
+const COLLECTIBLE_SPOTS = [
+  new THREE.Vector3(-4, 0.5, 3.5),   // river bend
+  new THREE.Vector3(-9, 0.5, -6),    // behind the spawn hamlet
+  new THREE.Vector3(-13, 0.5, 7),    // deep forest, spawn-to-camp
+  new THREE.Vector3(-23, 0.5, 8),    // camp outskirts
+  new THREE.Vector3(11, 0.5, 15),    // toward the northern mountains
+  new THREE.Vector3(27, 0.5, 19),    // behind the village houses
+  new THREE.Vector3(32, 0.5, 9),     // kitchen outskirts
+  new THREE.Vector3(24, 0.5, -9)     // near the playground, off to the side
 ];
 
 // Flamingo/Parrot/Stork all ship with a genuine flying-wingbeat animation
@@ -110,15 +126,50 @@ const STATIC_PROPS = [
   }
 ];
 
+// Each NPC gets several line-sets instead of one static pair — showDialogue()
+// cycles through them on repeat interaction (see roamer.dialogueIndex), so
+// talking to the same person twice doesn't just repeat itself verbatim.
 const NPC_LINES = [
-  ["Welcome to the village!", "Feel free to look around."],
-  ["Careful with those crates by the playground —", "I hear they're rigged to a ring target."],
-  ["Nice weather for a walk, isn't it?", "Try not to get lost near the mountains."],
-  ["The camp folks make a good fire.", "Go say hello."],
-  ["Did you see the storks circling overhead?", "They nest up in the foothills."],
-  ["A fox has been sneaking around the crates.", "Harmless — just curious."],
-  ["The river's calm this time of day.", "Good spot to sit and think."],
-  ["Watch your step near the mountains.", "The path gets steep fast."]
+  [
+    ["Welcome to the village!", "Feel free to look around."],
+    ["Still exploring?", "There's a playground on the south side worth seeing."],
+    ["Come back and see me anytime.", "I'm not going anywhere."]
+  ],
+  [
+    ["Careful with those crates by the playground —", "I hear they're rigged to a ring target."],
+    ["I heard someone's been throwing things around here.", "...was that you?"],
+    ["The reset button's there for a reason.", "Don't be shy about using it."]
+  ],
+  [
+    ["Nice weather for a walk, isn't it?", "Try not to get lost near the mountains."],
+    ["I keep meaning to hike up there.", "Never quite get around to it."],
+    ["Shiny things catch the light out past the treeline sometimes.", "Might be worth a look."]
+  ],
+  [
+    ["The camp folks make a good fire.", "Go say hello."],
+    ["Camp's just west of here.", "They tell better stories than we do."],
+    ["Ask them about the river.", "They know it better than anyone."]
+  ],
+  [
+    ["Did you see the storks circling overhead?", "They nest up in the foothills."],
+    ["The flamingos showed up a season early this year.", "Nobody's complaining."],
+    ["Birds go quiet right before it rains.", "Keep an eye on them."]
+  ],
+  [
+    ["A fox has been sneaking around the crates.", "Harmless — just curious."],
+    ["That fox has a favorite napping spot.", "Somewhere sunny, probably."],
+    ["Feed the fox and it'll follow you around all day.", "Don't feed the fox."]
+  ],
+  [
+    ["The river's calm this time of day.", "Good spot to sit and think."],
+    ["Something glints under the water sometimes.", "Trick of the light, probably."],
+    ["Follow the river far enough and it just keeps going.", "Never made it to the end myself."]
+  ],
+  [
+    ["Watch your step near the mountains.", "The path gets steep fast."],
+    ["The view from halfway up is worth it.", "Just don't go higher than that."],
+    ["Someone said they lost a gem out that way.", "I wouldn't know anything about that."]
+  ]
 ];
 
 // A short linear story: the guide relocates to each location in turn and
@@ -128,22 +179,22 @@ const NPC_LINES = [
 const QUEST_STAGE_KEY = "ale.world.questStage";
 const QUEST_STAGES = {
   intro: {
-    title: "Buy potatoes",
-    objective: "Find the market and buy potatoes for breakfast.",
+    title: "Go shopping",
+    objective: "Find the market and price out two items for breakfast.",
     guideLocation: () => new THREE.Vector3(2, 0, 2),
-    guideLines: ["Morning! Let's get breakfast.", "Head to the market and buy some potatoes."]
+    guideLines: ["Morning! Let's get breakfast.", "Head to the market — the vendor needs two things priced out."]
   },
   market: {
-    title: "Buy potatoes",
-    objective: "Work out the vendor's total and drop the right coin in the bowl.",
+    title: "Go shopping",
+    objective: "Work out each total and drop the right coin in the bowl, twice.",
     guideLocation: () => MARKET_CENTER.clone().add(new THREE.Vector3(-1.2, 0, 0.6)),
     guideLines: ["Check the sign, work out the total,", "and drop the right coin in the bowl."]
   },
   golf: {
     title: "Prove your aim",
-    objective: "Putt the ball into the glowing ring at the playground.",
+    objective: `Land ${RING_GOAL} throws in the glowing ring at the playground.`,
     guideLocation: () => PLAYGROUND_CENTER.clone().add(new THREE.Vector3(-1.2, 0, 1.2)),
-    guideLines: ["Breakfast sorted!", "Now grab that ball and land it in the ring."]
+    guideLines: ["Breakfast sorted!", `Now land ${RING_GOAL} throws in that ring — crates, barrels, the ball, anything goes.`]
   },
   kitchen: {
     title: "Cook something",
@@ -214,6 +265,12 @@ let kitchenZoneAtoms = []; // { name, mesh }
 let kitchenLocked = false;
 let kitchenFeedbackPanel = null;
 const kitchenZonePos = new THREE.Vector3();
+let toastPanel = null;
+let toastTimer = null;
+// Gems: optional side collectibles, no bearing on the main quest — pure
+// reward-and-exploration content. { id, mesh, phase } per uncollected gem.
+let collectibles = [];
+let gemsFound = 0;
 
 const keyQuaternion = new THREE.Quaternion();
 const keyDirection = new THREE.Vector3();
@@ -693,6 +750,7 @@ function registerRoamer(model, { home, radius, speed, actions, dialogue = null, 
     actions,
     current: null,
     dialogue,
+    dialogueIndex: 0,
     dialoguePanel: null,
     flying,
     altitudeMin,
@@ -748,8 +806,32 @@ function updateRoamers(delta) {
   }
 }
 
+// A brief rig-attached toast for one-off reward moments (gem picked up,
+// ring landed, quest stage cleared) — unlike the old always-on quest HUD
+// this stays hidden until something happens and fades itself out a couple
+// seconds later, so it reads as feedback rather than clutter.
+function showToast(text, color = "#38bdf8") {
+  if (!toastPanel) {
+    toastPanel = createTextPanel({ width: 1.2, height: 0.3, fontSize: 24, border: "rgba(56, 189, 248, 0.85)" });
+    toastPanel.position.set(0, 1.55, -1.4);
+    toastPanel.visible = false;
+    xrState.rig.add(toastPanel);
+  }
+  toastPanel.userData.setText([{ text, bold: true, size: 24, color }]);
+  toastPanel.visible = true;
+
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { if (toastPanel) toastPanel.visible = false; }, 2600);
+}
+
+// roamer.dialogue is a list of line-sets (each a [title, ...detail] array);
+// every interaction advances to the next set and wraps around, so repeat
+// conversations reveal new flavor instead of replaying the same two lines.
 function showDialogue(roamer) {
-  if (!roamer.dialogue) return;
+  if (!roamer.dialogue || roamer.dialogue.length === 0) return;
+  const lines = roamer.dialogue[roamer.dialogueIndex % roamer.dialogue.length];
+  roamer.dialogueIndex += 1;
+
   if (!roamer.dialoguePanel) {
     const panel = createTextPanel({ width: 1.3, height: 0.4, fontSize: 26, border: "rgba(251, 191, 36, 0.85)" });
     panel.position.set(0, 2.1, 0);
@@ -757,7 +839,7 @@ function showDialogue(roamer) {
     roamer.dialoguePanel = panel;
   }
   roamer.dialoguePanel.userData.setText(
-    roamer.dialogue.map((text, i) => ({ text, bold: i === 0, size: i === 0 ? 28 : 22, color: i === 0 ? "#fbbf24" : "#e8ecf6" }))
+    lines.map((text, i) => ({ text, bold: i === 0, size: i === 0 ? 28 : 22, color: i === 0 ? "#fbbf24" : "#e8ecf6" }))
   );
   roamer.dialoguePanel.visible = true;
 
@@ -769,7 +851,11 @@ function showDialogue(roamer) {
 
 function setGuideDialogue() {
   if (!guideRoamer) return;
-  guideRoamer.dialogue = QUEST_STAGES[questStage].guideLines;
+  // A single-entry line-set list — the guide's dialogue is already reactive
+  // to quest stage, so there's nothing to cycle through, just wrap it to
+  // match the [lineSet, lineSet, ...] shape showDialogue() expects.
+  guideRoamer.dialogue = [QUEST_STAGES[questStage].guideLines];
+  guideRoamer.dialogueIndex = 0;
 }
 
 // Teleports the guide to the new stage's location — a walk-over would be
@@ -1091,7 +1177,11 @@ function loadCast() {
     spawnCharacter(MARKET_CENTER.clone().add(new THREE.Vector3(0, 0, 0.9)), {
       radius: 0.3,
       speed: 0.2,
-      dialogue: ["Fresh potatoes!", "Check the sign for today's price."]
+      dialogue: [
+        ["Fresh potatoes!", "Check the sign for today's price."],
+        ["Take your time doing the math.", "I'm not going anywhere."],
+        ["Best potatoes this side of the river.", "Trust me."]
+      ]
     });
 
     guideRoamer = spawnCharacter(QUEST_STAGES[questStage].guideLocation(), {
@@ -1235,6 +1325,34 @@ function playThud(kind, strength) {
   osc.stop(ctx.currentTime + decay);
 }
 
+// A quick rising arpeggio — sine tones instead of playThud's percussive
+// triangle wave, so positive moments (a gem, a ring landing, finishing a
+// quest stage) sound distinct from an impact.
+const CHIME_PROFILE = {
+  gem: [660, 880],
+  success: [523, 659, 784]
+};
+
+function playChime(kind = "gem") {
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  const notes = CHIME_PROFILE[kind] ?? CHIME_PROFILE.gem;
+  notes.forEach((freq, i) => {
+    const start = ctx.currentTime + i * 0.09;
+    const decay = 0.22;
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, start);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.001, start);
+    gain.gain.linearRampToValueAtTime(0.22, start + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + decay);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(start);
+    osc.stop(start + decay + 0.02);
+  });
+}
+
 // Wires a mesh + cannon body into the grab system: while held, the body goes
 // kinematic and physics stops driving the mesh (grabSystem's own followHand
 // takes over instead); on release, the body snaps to the mesh's current
@@ -1352,13 +1470,38 @@ function buildMarketCoin() {
   return mesh;
 }
 
+// Breakfast needs two things, not one — the vendor asks two separate
+// pricing questions in a row (different item each time) before the story
+// moves on, instead of a single drag-and-drop being the whole "quest".
+const MARKET_ITEMS = [
+  { name: "Potatoes", unit: "kg" },
+  { name: "Bread", unit: "loaves" },
+  { name: "Apples", unit: "kg" },
+  { name: "Cheese", unit: "wheels" }
+];
+const MARKET_ROUNDS_NEEDED = 2;
+let marketRoundsDone = 0;
+
+function resetMarketCoins() {
+  marketCoins.forEach((coin) => {
+    coin.mesh.position.copy(coin.home);
+    coin.mesh.quaternion.set(0, 0, 0, 1);
+    coin.body.position.copy(coin.home);
+    coin.body.quaternion.set(0, 0, 0, 1);
+    coin.body.velocity.setZero();
+    coin.body.angularVelocity.setZero();
+    coin.body.wakeUp();
+  });
+}
+
 function generateMarketQuestion() {
+  const item = MARKET_ITEMS[Math.floor(Math.random() * MARKET_ITEMS.length)];
   const price = 2 + Math.floor(Math.random() * 5);
-  const kg = 2 + Math.floor(Math.random() * 3);
-  marketCorrectValue = price * kg;
+  const qty = 2 + Math.floor(Math.random() * 3);
+  marketCorrectValue = price * qty;
   marketQuestionPanel.userData.setText([
-    { text: `Vendor: "Potatoes are ${price} coins/kg.`, bold: true, size: 24 },
-    { text: `I need ${kg}kg — how many coins do I owe?"`, size: 22 }
+    { text: `Vendor: "${item.name} are ${price} coins/${item.unit.replace(/s$/, "")}.`, bold: true, size: 24 },
+    { text: `I need ${qty} ${item.unit} — how many coins do I owe?"`, size: 22 }
   ]);
 
   const values = new Set([marketCorrectValue]);
@@ -1372,6 +1515,7 @@ function generateMarketQuestion() {
     coin.value = shuffled[i];
     coin.mesh.userData.label.userData.setText(String(coin.value));
   });
+  resetMarketCoins();
 }
 
 function handleCoinDrop(mesh) {
@@ -1381,8 +1525,20 @@ function handleCoinDrop(mesh) {
   if (worldPos.distanceTo(marketBowlPos) > 0.22) return; // missed the bowl
 
   if (coin.value === marketCorrectValue) {
-    marketFeedbackPanel.userData.setText([{ text: "Correct! Thanks!", bold: true, size: 28, color: "#34d399" }]);
-    advanceQuest("golf");
+    marketRoundsDone += 1;
+    playChime("gem");
+    if (marketRoundsDone >= MARKET_ROUNDS_NEEDED) {
+      marketFeedbackPanel.userData.setText([{ text: "Correct! That's everything — thanks!", bold: true, size: 26, color: "#34d399" }]);
+      showToast("Shopping done! Head to the playground.", "#34d399");
+      playChime("success");
+      advanceQuest("golf");
+    } else {
+      marketFeedbackPanel.userData.setText([
+        { text: `Correct! (${marketRoundsDone}/${MARKET_ROUNDS_NEEDED})`, bold: true, size: 26, color: "#34d399" },
+        { text: "One more item to price out.", size: 20 }
+      ]);
+      generateMarketQuestion();
+    }
   } else {
     marketFeedbackPanel.userData.setText([
       { text: `${coin.value} isn't right —`, size: 24, color: "#f87171" },
@@ -1484,6 +1640,7 @@ function buildMarket() {
     return { mesh, body, home, value: 0 };
   });
 
+  marketRoundsDone = 0;
   generateMarketQuestion();
 }
 
@@ -1667,7 +1824,16 @@ function updateRingScoring() {
       ringScore += 1;
       changed = true;
       flashRing();
-      if (questStage === "golf") advanceQuest("kitchen");
+      playChime("gem");
+      if (questStage === "golf") {
+        if (ringScore >= RING_GOAL) {
+          showToast(`${RING_GOAL} landed — nice aim! Head to the kitchen.`, "#34d399");
+          playChime("success");
+          advanceQuest("kitchen");
+        } else {
+          showToast(`Landed! (${ringScore}/${RING_GOAL})`);
+        }
+      }
     } else if (!inside && prop.inRing) {
       prop.inRing = false;
     }
@@ -1683,7 +1849,7 @@ function refreshScoreboard() {
   const pyramidProps = props.filter((p) => p.kind !== "ball");
   const knocked = pyramidProps.filter((p) => p.mesh.position.distanceTo(p.home) > 1.0).length;
   scoreboard.userData.setText([
-    { text: "Knock the crates off, land things in the ring!", bold: true, size: 28 },
+    { text: `Knock the crates off, land ${RING_GOAL} things in the ring!`, bold: true, size: 28 },
     { text: `Scattered: ${knocked}/${pyramidProps.length}   ·   Ring: ${ringScore} (best ${bestRingScore})`, size: 24, color: "#34d399" },
     { text: "WASD / thumbstick to walk, grip to grab & throw", size: 20, color: "#8fa3c8" }
   ]);
@@ -1954,6 +2120,71 @@ function updateButterflies() {
   }
 }
 
+const GEMS_KEY = "ale.world.gemsCollected";
+const GEM_PICKUP_RADIUS = 0.9;
+
+// Optional side collectibles — spinning, bobbing gems scattered around the
+// world (see COLLECTIBLE_SPOTS). Purely a reward loop for exploring off the
+// direct quest path; skips any spot already collected earlier this session.
+function buildCollectibles() {
+  let savedIds = [];
+  try { savedIds = JSON.parse(sessionStorage.getItem(GEMS_KEY) ?? "[]"); } catch { savedIds = []; }
+  const savedSet = new Set(savedIds);
+  gemsFound = savedSet.size;
+  collectibles = [];
+
+  const geometry = new THREE.OctahedronGeometry(0.14, 0);
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x38bdf8, emissive: 0x38bdf8, emissiveIntensity: 0.7, roughness: 0.2, metalness: 0.3
+  });
+
+  COLLECTIBLE_SPOTS.forEach((pos, id) => {
+    if (savedSet.has(id)) return; // already found earlier this session
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.copy(pos);
+    mesh.castShadow = true;
+    worldGroup.add(mesh);
+    collectibles.push({ id, mesh, phase: Math.random() * Math.PI * 2 });
+  });
+}
+
+function collectGem(gem) {
+  worldGroup.remove(gem.mesh);
+  gemsFound += 1;
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(GEMS_KEY) ?? "[]");
+    saved.push(gem.id);
+    sessionStorage.setItem(GEMS_KEY, JSON.stringify(saved));
+  } catch { /* storage unavailable */ }
+
+  playChime(gemsFound >= COLLECTIBLE_SPOTS.length ? "success" : "gem");
+  showToast(
+    gemsFound >= COLLECTIBLE_SPOTS.length
+      ? `All ${COLLECTIBLE_SPOTS.length} gems found — nice exploring!`
+      : `Found a gem! (${gemsFound}/${COLLECTIBLE_SPOTS.length})`,
+    "#38bdf8"
+  );
+}
+
+function updateCollectibles() {
+  if (collectibles.length === 0) return;
+  const rigPos = xrState.rig.position;
+  for (let i = collectibles.length - 1; i >= 0; i--) {
+    const gem = collectibles[i];
+    gem.mesh.rotation.y = elapsed * 1.4 + gem.phase;
+    gem.mesh.position.y = 0.5 + Math.sin(elapsed * 2 + gem.phase) * 0.08;
+    // Horizontal-only distance — the gem's own bob shouldn't make pickup
+    // finickier, and rig.position.y sits at ground level regardless of the
+    // gem's floating height.
+    const dx = gem.mesh.position.x - rigPos.x;
+    const dz = gem.mesh.position.z - rigPos.z;
+    if (Math.hypot(dx, dz) < GEM_PICKUP_RADIUS) {
+      collectGem(gem);
+      collectibles.splice(i, 1);
+    }
+  }
+}
+
 export function mount(scene) {
   sceneRef = scene;
   disposed = false;
@@ -2008,6 +2239,7 @@ export function mount(scene) {
 
   butterflies = buildButterflies();
   worldGroup.add(butterflies.group);
+  buildCollectibles();
 
   // No permanent on-screen quest HUD — it read as unwanted clutter sitting
   // in front of the camera at all times. The guide NPC's dialogue already
@@ -2044,6 +2276,7 @@ export function mount(scene) {
     if (river) river.material.map?.offset.set(0, -elapsed * 0.05);
     updateButterflies();
     updateStaticBobbers(elapsed);
+    updateCollectibles();
   };
   xrState.updatables.add(updateFn);
 
@@ -2133,6 +2366,19 @@ export function unmount() {
     disposeTree(questLogPanel);
     questLogPanel = null;
   }
+  if (toastPanel) {
+    clearTimeout(toastTimer);
+    xrState.rig.remove(toastPanel);
+    disposeTree(toastPanel);
+    toastPanel = null;
+  }
+  playgroundRamp = null;
+  playgroundRing = null;
+  playgroundResetBtn = null;
+  kitchenGroup = null;
+  marketRoundsDone = 0;
+  collectibles = [];
+  gemsFound = 0;
 
   sceneRef.remove(worldGroup);
   disposeTree(worldGroup);
