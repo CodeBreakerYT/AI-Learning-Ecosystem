@@ -50,18 +50,27 @@ const ZONES = [
   { center: KITCHEN_CENTER, radius: 4 }
 ];
 
+// Flamingo/Parrot/Stork all ship with a genuine flying-wingbeat animation
+// (that's what they're famous for in three.js's own demos) — flying: true
+// makes loadCreatures() actually send them soaring at altitude instead of
+// walking them around on the ground like Horse/Fox.
 const CREATURES = [
-  { file: "Flamingo.glb", targetSize: 0.6, extra: 2 },
-  { file: "Parrot.glb", targetSize: 0.32, extra: 2 },
-  { file: "Stork.glb", targetSize: 0.7, extra: 1 },
-  { file: "Horse.glb", targetSize: 1.5, extra: 1 }
+  { file: "Flamingo.glb", targetSize: 0.6, extra: 3, flying: true, altitude: [3, 6], radius: 11, speed: 1.3 },
+  { file: "Parrot.glb", targetSize: 0.32, extra: 3, flying: true, altitude: [4, 8], radius: 13, speed: 1.6 },
+  { file: "Stork.glb", targetSize: 0.7, extra: 2, flying: true, altitude: [4, 7], radius: 12, speed: 1.4 },
+  { file: "Horse.glb", targetSize: 1.5, extra: 2 },
+  { file: "Fox.glb", targetSize: 0.55, extra: 3 }
 ];
 
 const NPC_LINES = [
   ["Welcome to the village!", "Feel free to look around."],
   ["Careful with those crates by the playground —", "I hear they're rigged to a ring target."],
   ["Nice weather for a walk, isn't it?", "Try not to get lost near the mountains."],
-  ["The camp folks make a good fire.", "Go say hello."]
+  ["The camp folks make a good fire.", "Go say hello."],
+  ["Did you see the storks circling overhead?", "They nest up in the foothills."],
+  ["A fox has been sneaking around the crates.", "Harmless — just curious."],
+  ["The river's calm this time of day.", "Good spot to sit and think."],
+  ["Watch your step near the mountains.", "The path gets steep fast."]
 ];
 
 // A short linear story: the guide relocates to each location in turn and
@@ -590,7 +599,7 @@ function fitAndGround(model, targetSize) {
 // loops for the whole lifetime, translation gives the sense of movement) or
 // { idle, walk } for a model with distinct clips (the NPCs), switched based
 // on whether it's currently moving toward a target or paused.
-function registerRoamer(model, { home, radius, speed, actions, dialogue = null }) {
+function registerRoamer(model, { home, radius, speed, actions, dialogue = null, flying = false, altitudeMin = 0, altitudeMax = 0 }) {
   roamers.push({
     root: model,
     home: home.clone(),
@@ -601,7 +610,10 @@ function registerRoamer(model, { home, radius, speed, actions, dialogue = null }
     actions,
     current: null,
     dialogue,
-    dialoguePanel: null
+    dialoguePanel: null,
+    flying,
+    altitudeMin,
+    altitudeMax
   });
 }
 
@@ -618,11 +630,18 @@ function updateRoamers(delta) {
   const now = performance.now();
   for (const roamer of roamers) {
     roamDelta.copy(roamer.target).sub(roamer.root.position);
-    roamDelta.y = 0;
+    if (!roamer.flying) roamDelta.y = 0;
     const dist = roamDelta.length();
 
     if (dist < 0.15) {
-      if (now >= roamer.pauseUntil) {
+      if (roamer.flying) {
+        // Birds never land or idle mid-air — immediately pick the next
+        // waypoint in the circling pattern so the flight looks continuous.
+        const angle = Math.random() * Math.PI * 2;
+        const r = roamer.radius * (0.5 + Math.random() * 0.5);
+        const alt = roamer.altitudeMin + Math.random() * (roamer.altitudeMax - roamer.altitudeMin);
+        roamer.target.set(roamer.home.x + Math.cos(angle) * r, alt, roamer.home.z + Math.sin(angle) * r);
+      } else if (now >= roamer.pauseUntil) {
         const angle = Math.random() * Math.PI * 2;
         const r = Math.random() * roamer.radius;
         roamer.target.set(roamer.home.x + Math.cos(angle) * r, roamer.root.position.y, roamer.home.z + Math.sin(angle) * r);
@@ -697,16 +716,20 @@ function advanceQuest(newStage) {
 
 function loadCreatures() {
   const loader = new GLTFLoader();
-  const spotCount = CREATURES.reduce((sum, c) => sum + 1 + (c.extra ?? 0), 0);
-  let spotIndex = 0;
 
-  function place(model) {
+  // Ground creatures: fitAndGround() already set position.y so the model's
+  // feet sit exactly on the ground; only x/z come from the random spot.
+  // Flying creatures skip grounding entirely and get a random altitude
+  // within their species' band instead, since they're never meant to touch
+  // down — landing them via fitAndGround would look like a crash.
+  function place(model, flying, altitudeRange) {
     const spot = randomFreeSpot(6, 24);
-    // x/z only — fitAndGround() already set position.y so the model's feet
-    // sit exactly on the ground; overwriting it with spot.y (always 0) would
-    // undo that and sink/float the model depending on its rest origin.
     model.position.x = spot.x;
     model.position.z = spot.z;
+    if (flying) {
+      const [min, max] = altitudeRange;
+      model.position.y = min + Math.random() * (max - min);
+    }
     spot.y = model.position.y;
     model.rotation.y = Math.random() * Math.PI * 2;
     model.traverse((node) => { if (node.isMesh) node.castShadow = true; });
@@ -714,7 +737,15 @@ function loadCreatures() {
     return spot;
   }
 
-  const loadPromises = CREATURES.map(({ file, targetSize, extra = 0 }) =>
+  // Picks the walk/run cycle over an idle/survey pose for multi-clip models
+  // like Fox — animations[0] isn't reliably "the one that should loop while
+  // moving" once a model has more than a single clip.
+  function pickMoveClip(animations) {
+    if (!animations?.length) return null;
+    return animations.find((c) => /walk|run|fly/i.test(c.name)) ?? animations[0];
+  }
+
+  const loadPromises = CREATURES.map(({ file, targetSize, extra = 0, flying = false, altitude = [0, 0], radius = 4, speed = 0.5 }) =>
     new Promise((resolve) => {
       loader.load(
         `${import.meta.env.BASE_URL}assets/models/world/${file}`,
@@ -722,32 +753,38 @@ function loadCreatures() {
           if (disposed) { resolve(); return; } // navigated away before the download finished
           const primary = gltf.scene;
           fitAndGround(primary, targetSize);
-          const home = place(primary);
-          spotIndex++;
+          const home = place(primary, flying, altitude);
+          const moveClip = pickMoveClip(gltf.animations);
           let mixer = null;
-          if (gltf.animations?.length) {
+          if (moveClip) {
             mixer = new THREE.AnimationMixer(primary);
-            const action = mixer.clipAction(gltf.animations[0]);
-            action.play();
+            mixer.clipAction(moveClip).play();
             mixers.push(mixer);
           }
-          registerRoamer(primary, { home, radius: 4, speed: 0.5, actions: { move: mixer?.clipAction(gltf.animations[0]) } });
+          registerRoamer(primary, {
+            home, radius, speed, flying,
+            altitudeMin: altitude[0], altitudeMax: altitude[1],
+            actions: { move: mixer?.clipAction(moveClip) }
+          });
 
-          // A couple of extra clones per bird for a livelier world without
+          // A few extra clones per species for a livelier world without
           // downloading more assets — SkeletonUtils.clone (not plain
           // Object3D.clone) is required so the animated skeleton's bone
           // bindings copy correctly onto the duplicate.
           for (let i = 0; i < extra; i++) {
             const copy = cloneSkinned(primary);
-            const copyHome = place(copy);
-            spotIndex++;
+            const copyHome = place(copy, flying, altitude);
             let copyMixer = null;
-            if (gltf.animations?.length) {
+            if (moveClip) {
               copyMixer = new THREE.AnimationMixer(copy);
-              copyMixer.clipAction(gltf.animations[0]).play();
+              copyMixer.clipAction(moveClip).play();
               mixers.push(copyMixer);
             }
-            registerRoamer(copy, { home: copyHome, radius: 4, speed: 0.5, actions: { move: copyMixer?.clipAction(gltf.animations[0]) } });
+            registerRoamer(copy, {
+              home: copyHome, radius, speed, flying,
+              altitudeMin: altitude[0], altitudeMax: altitude[1],
+              actions: { move: copyMixer?.clipAction(moveClip) }
+            });
           }
           resolve();
         },
@@ -763,8 +800,12 @@ function loadCreatures() {
 const NPC_SPOTS = [
   { center: VILLAGE_CENTER, offset: new THREE.Vector3(1.2, 0, -0.6) },
   { center: VILLAGE_CENTER, offset: new THREE.Vector3(-1.4, 0, 1.0) },
+  { center: VILLAGE_CENTER, offset: new THREE.Vector3(2.1, 0, 0.4) },
+  { center: VILLAGE_CENTER, offset: new THREE.Vector3(-0.6, 0, -1.9) },
   { center: CAMP_CENTER, offset: new THREE.Vector3(0.8, 0, 1.4) },
-  { center: CAMP_CENTER, offset: new THREE.Vector3(-1.0, 0, -0.8) }
+  { center: CAMP_CENTER, offset: new THREE.Vector3(-1.0, 0, -0.8) },
+  { center: CAMP_CENTER, offset: new THREE.Vector3(1.9, 0, -0.3) },
+  { center: CAMP_CENTER, offset: new THREE.Vector3(-2.0, 0, 1.1) }
 ];
 
 // Clones a model's materials so a per-character tint (the guide) doesn't
@@ -790,78 +831,95 @@ function addQuestMarker(model, symbol, color) {
   return marker;
 }
 
-// Loads Xbot.glb once and spawns every human character from it — the
-// ambient village/camp NPCs, the market vendor, and the story guide —
-// instead of re-downloading the same asset per role. Xbot (not Soldier) is
-// deliberately used here: it's a plain civilian mannequin, not armor, so it
-// actually reads as a person instead of a combat robot.
+// Loads two distinct human models (Xbot + CesiumMan) once each and spawns
+// every character — ambient village/camp NPCs, the market vendor, the story
+// guide — as clones alternating between them, instead of everyone in the
+// world being the exact same reused mannequin. Xbot is a plain civilian
+// mannequin (not armor, unlike three.js's Soldier.glb), and CesiumMan is the
+// well-known Khronos glTF sample human — different enough silhouettes that
+// the village actually reads as having more than one person in it.
 function loadCast() {
   const loader = new GLTFLoader();
-  return new Promise((resolve) => {
+  const humanFiles = ["Xbot.glb", "CesiumMan.glb"];
+
+  const loadPromises = humanFiles.map((file) => new Promise((resolve) => {
     loader.load(
-      `${import.meta.env.BASE_URL}assets/models/world/Xbot.glb`,
-      (gltf) => {
-        if (disposed) { resolve(); return; }
-        const clipFor = (name) => gltf.animations.find((c) => c.name.toLowerCase() === name);
-        const idleClip = clipFor("idle") ?? gltf.animations[0];
-        const walkClip = clipFor("walk") ?? gltf.animations[0];
-
-        function spawnCharacter(spawnPos, { radius = 2.5, speed = 0.35, dialogue = null, tint = null, marker = null } = {}) {
-          const model = cloneSkinned(gltf.scene);
-          fitAndGround(model, 1.7);
-          // x/z only — preserve the y fitAndGround() just computed so the
-          // character's feet sit on the ground instead of snapping to y=0.
-          model.position.x = spawnPos.x;
-          model.position.z = spawnPos.z;
-          const home = new THREE.Vector3(spawnPos.x, model.position.y, spawnPos.z);
-          model.rotation.y = Math.random() * Math.PI * 2;
-          model.traverse((node) => { if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; } });
-          if (tint) tintModel(model, tint);
-          worldGroup.add(model);
-
-          const mixer = new THREE.AnimationMixer(model);
-          const idle = idleClip ? mixer.clipAction(idleClip) : null;
-          const walk = walkClip ? mixer.clipAction(walkClip) : null;
-          idle?.play();
-          mixers.push(mixer);
-
-          registerRoamer(model, { home, radius, speed, actions: { idle, walk }, dialogue });
-          const roamer = roamers[roamers.length - 1];
-          roamer.current = "idle";
-          if (marker) roamer.marker = addQuestMarker(model, marker.symbol, marker.color);
-
-          interaction.add(model, {
-            onSelect: () => showDialogue(roamer),
-            onHoverStart: () => { model.scale.multiplyScalar(1.05); },
-            onHoverEnd: () => { model.scale.multiplyScalar(1 / 1.05); }
-          });
-
-          return roamer;
-        }
-
-        NPC_SPOTS.forEach((spot, i) => {
-          spawnCharacter(spot.center.clone().add(spot.offset), { dialogue: NPC_LINES[i % NPC_LINES.length] });
-        });
-
-        spawnCharacter(MARKET_CENTER.clone().add(new THREE.Vector3(0, 0, 0.9)), {
-          radius: 0.3,
-          speed: 0.2,
-          dialogue: ["Fresh potatoes!", "Check the sign for today's price."]
-        });
-
-        guideRoamer = spawnCharacter(QUEST_STAGES[questStage].guideLocation(), {
-          radius: 0.3,
-          speed: 0.2,
-          tint: new THREE.Color(0x8fb3ff),
-          marker: { symbol: "!", color: "#fbbf24" }
-        });
-        setGuideDialogue();
-
-        resolve();
-      },
+      `${import.meta.env.BASE_URL}assets/models/world/${file}`,
+      (gltf) => resolve(gltf),
       undefined,
-      (err) => { console.warn("Couldn't load Xbot.glb:", err.message); resolve(); }
+      (err) => { console.warn(`Couldn't load ${file}:`, err.message); resolve(null); }
     );
+  }));
+
+  return Promise.all(loadPromises).then(([xbotGltf, cesiumGltf]) => {
+    if (disposed) return;
+
+    // Each "kit" bundles a base scene with its own idle/walk clips — models
+    // with only one animation (CesiumMan) just reuse it for both states,
+    // the same fallback already used for the single-clip creature models.
+    const humanKits = [xbotGltf, cesiumGltf].filter(Boolean).map((gltf) => {
+      const clipFor = (name) => gltf.animations.find((c) => c.name.toLowerCase() === name);
+      return {
+        scene: gltf.scene,
+        idleClip: clipFor("idle") ?? gltf.animations[0],
+        walkClip: clipFor("walk") ?? gltf.animations[0]
+      };
+    });
+    if (humanKits.length === 0) return; // both failed to load — nothing to spawn
+
+    let kitIndex = 0;
+    function spawnCharacter(spawnPos, { radius = 2.5, speed = 0.35, dialogue = null, tint = null, marker = null, kit: forcedKit = null } = {}) {
+      const kit = forcedKit ?? humanKits[kitIndex++ % humanKits.length];
+      const model = cloneSkinned(kit.scene);
+      fitAndGround(model, 1.7);
+      // x/z only — preserve the y fitAndGround() just computed so the
+      // character's feet sit on the ground instead of snapping to y=0.
+      model.position.x = spawnPos.x;
+      model.position.z = spawnPos.z;
+      const home = new THREE.Vector3(spawnPos.x, model.position.y, spawnPos.z);
+      model.rotation.y = Math.random() * Math.PI * 2;
+      model.traverse((node) => { if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; } });
+      if (tint) tintModel(model, tint);
+      worldGroup.add(model);
+
+      const mixer = new THREE.AnimationMixer(model);
+      const idle = kit.idleClip ? mixer.clipAction(kit.idleClip) : null;
+      const walk = kit.walkClip ? mixer.clipAction(kit.walkClip) : null;
+      idle?.play();
+      mixers.push(mixer);
+
+      registerRoamer(model, { home, radius, speed, actions: { idle, walk }, dialogue });
+      const roamer = roamers[roamers.length - 1];
+      roamer.current = "idle";
+      if (marker) roamer.marker = addQuestMarker(model, marker.symbol, marker.color);
+
+      interaction.add(model, {
+        onSelect: () => showDialogue(roamer),
+        onHoverStart: () => { model.scale.multiplyScalar(1.05); },
+        onHoverEnd: () => { model.scale.multiplyScalar(1 / 1.05); }
+      });
+
+      return roamer;
+    }
+
+    NPC_SPOTS.forEach((spot, i) => {
+      spawnCharacter(spot.center.clone().add(spot.offset), { dialogue: NPC_LINES[i % NPC_LINES.length] });
+    });
+
+    spawnCharacter(MARKET_CENTER.clone().add(new THREE.Vector3(0, 0, 0.9)), {
+      radius: 0.3,
+      speed: 0.2,
+      dialogue: ["Fresh potatoes!", "Check the sign for today's price."]
+    });
+
+    guideRoamer = spawnCharacter(QUEST_STAGES[questStage].guideLocation(), {
+      radius: 0.3,
+      speed: 0.2,
+      tint: new THREE.Color(0x8fb3ff),
+      marker: { symbol: "!", color: "#fbbf24" },
+      kit: humanKits[0] // always the same recognizable model+tint, session to session
+    });
+    setGuideDialogue();
   });
 }
 
