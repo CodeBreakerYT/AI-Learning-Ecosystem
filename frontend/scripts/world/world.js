@@ -44,7 +44,7 @@ const MARKET_CENTER = new THREE.Vector3(8, 0, 5);
 const KITCHEN_CENTER = new THREE.Vector3(28, 0, 4);
 const ZONES = [
   { center: PLAYGROUND_CENTER, radius: 4.5 },
-  { center: VILLAGE_CENTER, radius: 7 },
+  { center: VILLAGE_CENTER, radius: 9 },
   { center: CAMP_CENTER, radius: 6 },
   { center: MARKET_CENTER, radius: 4 },
   { center: KITCHEN_CENTER, radius: 4 }
@@ -473,21 +473,24 @@ function buildHouse(x, z, rotationY) {
 }
 
 function buildVillage() {
-  const layout = [
-    { dx: -2.4, dz: -1.5, ry: 0.4 },
-    { dx: 2.2, dz: -1.8, ry: -0.5 },
-    { dx: -1.6, dz: 2.2, ry: 2.6 },
-    { dx: 2.6, dz: 1.8, ry: -2.3 },
-    // Outer ring — fills out the rest of the village's 7m radius instead of
-    // leaving it as bare grass around a cluster of just four houses.
-    { dx: 4.2, dz: -0.3, ry: -1.6 },
-    { dx: -4.0, dz: 0.8, ry: 1.2 },
-    { dx: 0.5, dz: -3.8, ry: 0.9 },
-    { dx: -0.8, dz: 4.0, ry: -0.7 }
-  ];
-  layout.forEach(({ dx, dz, ry }) => {
+  // Houses are up to 2.8 x 2.3 (see buildHouse), so worst-case they need
+  // ~3.6m of center-to-center clearance to never overlap regardless of
+  // rotation. Evenly ringing them around the village center guarantees that
+  // spacing instead of the old hand-picked dx/dz array, which had a pair
+  // only ~2m apart and rendered as two houses with fused walls.
+  const count = 8;
+  const ringRadius = 6.2;
+  const jitter = 0.5;
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2;
+    const r = ringRadius + (Math.random() - 0.5) * jitter;
+    const dx = Math.sin(angle) * r;
+    const dz = Math.cos(angle) * r;
+    // Face roughly toward the village center (doors toward the market)
+    // with a little variance so the ring doesn't look robotically uniform.
+    const ry = angle + Math.PI + (Math.random() - 0.5) * 0.5;
     worldGroup.add(buildHouse(VILLAGE_CENTER.x + dx, VILLAGE_CENTER.z + dz, ry));
-  });
+  }
 }
 
 function buildTent(x, z, rotationY, color) {
@@ -793,7 +796,19 @@ function loadCreatures() {
   // moving" once a model has more than a single clip.
   function pickMoveClip(animations) {
     if (!animations?.length) return null;
-    return animations.find((c) => /walk|run|fly/i.test(c.name)) ?? animations[0];
+    const walkLike = animations.find((c) => /walk|run|fly/i.test(c.name));
+    if (walkLike) return walkLike;
+    const first = animations[0];
+    // A clip literally named idle/iddle is a standing pose, not a locomotion
+    // cycle — using it as a "move" animation makes the model visibly slide
+    // across the ground in place (this is what happened with Giraffe.glb,
+    // whose only clip is "iddle"). Better to treat it as having no move clip.
+    return /idle|iddle/i.test(first.name) ? null : first;
+  }
+
+  function pickIdleClip(animations) {
+    if (!animations?.length) return null;
+    return animations.find((c) => /idle|iddle/i.test(c.name)) ?? animations[0];
   }
 
   const loadPromises = CREATURES.map(({ file, targetSize, extra = 0, flying = false, altitude = [0, 0], radius = 4, speed = 0.5, facingOffset = 0 }) =>
@@ -806,17 +821,25 @@ function loadCreatures() {
           fitAndGround(primary, targetSize);
           const home = place(primary, flying, altitude);
           const moveClip = pickMoveClip(gltf.animations);
-          let mixer = null;
+          const idleClip = moveClip ? null : pickIdleClip(gltf.animations);
           if (moveClip) {
-            mixer = new THREE.AnimationMixer(primary);
+            const mixer = new THREE.AnimationMixer(primary);
             mixer.clipAction(moveClip).play();
             mixers.push(mixer);
+            registerRoamer(primary, {
+              home, radius, speed, flying, facingOffset,
+              altitudeMin: altitude[0], altitudeMax: altitude[1],
+              actions: { move: mixer.clipAction(moveClip) }
+            });
+          } else if (idleClip) {
+            // No genuine walk/run/fly cycle exists (e.g. Giraffe.glb only
+            // ships an "iddle" pose) — play the idle clip in place instead
+            // of registering as a roamer, which would visibly slide a
+            // standing pose across the ground.
+            const mixer = new THREE.AnimationMixer(primary);
+            mixer.clipAction(idleClip).play();
+            mixers.push(mixer);
           }
-          registerRoamer(primary, {
-            home, radius, speed, flying, facingOffset,
-            altitudeMin: altitude[0], altitudeMax: altitude[1],
-            actions: { move: mixer?.clipAction(moveClip) }
-          });
 
           // A few extra clones per species for a livelier world without
           // downloading more assets — SkeletonUtils.clone (not plain
@@ -825,17 +848,20 @@ function loadCreatures() {
           for (let i = 0; i < extra; i++) {
             const copy = cloneSkinned(primary);
             const copyHome = place(copy, flying, altitude);
-            let copyMixer = null;
             if (moveClip) {
-              copyMixer = new THREE.AnimationMixer(copy);
+              const copyMixer = new THREE.AnimationMixer(copy);
               copyMixer.clipAction(moveClip).play();
               mixers.push(copyMixer);
+              registerRoamer(copy, {
+                home: copyHome, radius, speed, flying, facingOffset,
+                altitudeMin: altitude[0], altitudeMax: altitude[1],
+                actions: { move: copyMixer.clipAction(moveClip) }
+              });
+            } else if (idleClip) {
+              const copyMixer = new THREE.AnimationMixer(copy);
+              copyMixer.clipAction(idleClip).play();
+              mixers.push(copyMixer);
             }
-            registerRoamer(copy, {
-              home: copyHome, radius, speed, flying, facingOffset,
-              altitudeMin: altitude[0], altitudeMax: altitude[1],
-              actions: { move: copyMixer?.clipAction(moveClip) }
-            });
           }
           resolve();
         },
