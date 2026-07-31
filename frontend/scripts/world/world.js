@@ -42,12 +42,16 @@ const VILLAGE_CENTER = new THREE.Vector3(20, 0, 12);
 const CAMP_CENTER = new THREE.Vector3(-20, 0, 12);
 const MARKET_CENTER = new THREE.Vector3(8, 0, 5);
 const KITCHEN_CENTER = new THREE.Vector3(28, 0, 4);
+// A small hamlet tucked into the gap between the playground and camp paths
+// (SW of spawn) so the player sees houses right away instead of bare grass.
+const SPAWN_HAMLET_CENTER = new THREE.Vector3(-5, 0, -3);
 const ZONES = [
   { center: PLAYGROUND_CENTER, radius: 4.5 },
   { center: VILLAGE_CENTER, radius: 9 },
   { center: CAMP_CENTER, radius: 6 },
   { center: MARKET_CENTER, radius: 4 },
-  { center: KITCHEN_CENTER, radius: 4 }
+  { center: KITCHEN_CENTER, radius: 4 },
+  { center: SPAWN_HAMLET_CENTER, radius: 5 }
 ];
 
 // Flamingo/Parrot/Stork all ship with a genuine flying-wingbeat animation
@@ -490,6 +494,23 @@ function buildVillage() {
     // with a little variance so the ring doesn't look robotically uniform.
     const ry = angle + Math.PI + (Math.random() - 0.5) * 0.5;
     worldGroup.add(buildHouse(VILLAGE_CENTER.x + dx, VILLAGE_CENTER.z + dz, ry));
+  }
+}
+
+// A few houses right near the player's spawn point so the world doesn't
+// open on empty grass — same spacing math as buildVillage() (3 houses on a
+// 3m ring clears the ~3.6m worst-case footprint with room to spare).
+function buildSpawnHamlet() {
+  const count = 3;
+  const ringRadius = 3;
+  const jitter = 0.5;
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2;
+    const r = ringRadius + (Math.random() - 0.5) * jitter;
+    const dx = Math.sin(angle) * r;
+    const dz = Math.cos(angle) * r;
+    const ry = angle + Math.PI + (Math.random() - 0.5) * 0.5;
+    worldGroup.add(buildHouse(SPAWN_HAMLET_CENTER.x + dx, SPAWN_HAMLET_CENTER.z + dz, ry));
   }
 }
 
@@ -1933,6 +1954,7 @@ export function mount(scene) {
   buildPaths();
   buildRiver();
   buildVillage();
+  buildSpawnHamlet();
   buildCamp();
   buildRamp();
   buildPyramid();
@@ -1945,16 +1967,10 @@ export function mount(scene) {
   butterflies = buildButterflies();
   worldGroup.add(butterflies.group);
 
-  // Rig-attached (unlike the playground scoreboard, which stays fixed in
-  // world space) so the current objective stays readable no matter which
-  // of the story's locations the player is standing in. No yaw rotation —
-  // it used to sit at a 0.35 rad angle far off to the left, which reads as
-  // an extreme, warped trapezoid in perspective from the default forward
-  // view instead of a clean readable panel.
-  questLogPanel = createTextPanel({ width: 1.15, height: 0.36, fontSize: 22 });
-  questLogPanel.position.set(-0.95, 1.85, -2.3);
-  xrState.rig.add(questLogPanel);
-  refreshQuestLog();
+  // No permanent on-screen quest HUD — it read as unwanted clutter sitting
+  // in front of the camera at all times. The guide NPC's dialogue already
+  // carries the current objective (see setGuideDialogue/relocateGuide),
+  // which is enough to follow the story without a floating text box.
 
   setStatus("Loading world…");
   Promise.allSettled([loadCreatures(), loadCast(), loadStaticProps()]).then(() => { if (!disposed) setStatus(""); });
