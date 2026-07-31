@@ -23,6 +23,11 @@ export function createXRApp(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
+  // Filmic tone mapping gives every scene a softer highlight rolloff and
+  // richer contrast than the flat linear default — the single biggest
+  // "does this look like a game or a tech demo" lever available for free.
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
   renderer.xr.enabled = true;
   renderer.xr.setReferenceSpaceType("local-floor");
 

@@ -126,6 +126,7 @@ let scoreboard = null;
 let ringMarker = null;
 let campFlames = [];
 let river = null;
+let butterflies = null; // { group, flutters } — see buildButterflies()
 let keysDown = new Set();
 let disposed = true;
 let ringScore = 0;
@@ -1502,6 +1503,213 @@ function handleLookPointerUp(event) {
   lookActive = false;
 }
 
+// ---------------------------------------------------------------------------
+// Environmental dressing: the open grass between the village/camp/market was
+// bare, so this scatters flowers, grass tufts, bushes and rocks across it
+// (each type is one InstancedMesh — a few thousand instances for the cost of
+// four draw calls, unlike buildTree's one-Group-per-tree approach), lays
+// dirt paths connecting the points of interest, and adds a few butterflies
+// for ambient motion. Purely decorative, same flat-world convention as
+// buildMountains — nothing here blocks locomotion.
+// ---------------------------------------------------------------------------
+
+const dummyMatrix = new THREE.Matrix4();
+const dummyPos = new THREE.Vector3();
+const dummyQuat = new THREE.Quaternion();
+const dummyScale = new THREE.Vector3();
+const dummyColor = new THREE.Color();
+
+function scatterInstances(mesh, count, { minR, maxR, extraRadius = 0, minScale = 0.7, maxScale = 1.3, colorVariants = null }) {
+  let placed = 0;
+  let attempts = 0;
+  while (placed < count && attempts < count * 4) {
+    attempts++;
+    const angle = Math.random() * Math.PI * 2;
+    const r = minR + Math.random() * (maxR - minR);
+    const x = Math.cos(angle) * r;
+    const z = Math.sin(angle) * r;
+    if (!isFreeSpot(x, z, extraRadius)) continue;
+
+    dummyPos.set(x, 0, z);
+    dummyQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * Math.PI * 2);
+    const s = minScale + Math.random() * (maxScale - minScale);
+    dummyScale.set(s, s, s);
+    dummyMatrix.compose(dummyPos, dummyQuat, dummyScale);
+    mesh.setMatrixAt(placed, dummyMatrix);
+
+    if (colorVariants) {
+      dummyColor.set(colorVariants[Math.floor(Math.random() * colorVariants.length)]);
+      mesh.setColorAt(placed, dummyColor); // lazily creates mesh.instanceColor on first call
+    }
+    placed++;
+  }
+  mesh.count = placed;
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+}
+
+function buildFlowerPatch() {
+  const petalColors = [0xff6b9d, 0xffd54a, 0xf5f5f5, 0xff8a5c, 0xc084fc];
+  const geometry = new THREE.ConeGeometry(0.035, 0.09, 5);
+  geometry.translate(0, 0.045, 0);
+  const material = new THREE.MeshStandardMaterial({ roughness: 0.7, vertexColors: true });
+  const mesh = new THREE.InstancedMesh(geometry, material, 260);
+  mesh.name = "flowerPatch";
+  scatterInstances(mesh, 260, { minR: 3, maxR: 30, minScale: 0.8, maxScale: 1.6, colorVariants: petalColors });
+  return mesh;
+}
+
+function buildGrassTufts() {
+  const geometry = new THREE.ConeGeometry(0.05, 0.22, 4);
+  geometry.translate(0, 0.11, 0);
+  const material = new THREE.MeshStandardMaterial({ color: 0x3f7a45, roughness: 1 });
+  const mesh = new THREE.InstancedMesh(geometry, material, 420);
+  mesh.name = "grassTufts";
+  scatterInstances(mesh, 420, { minR: 2.5, maxR: 31, minScale: 0.7, maxScale: 1.7 });
+  return mesh;
+}
+
+function buildBushes() {
+  const geometry = new THREE.IcosahedronGeometry(0.26, 0);
+  const material = new THREE.MeshStandardMaterial({ color: 0x336640, roughness: 0.95 });
+  const mesh = new THREE.InstancedMesh(geometry, material, 70);
+  mesh.castShadow = true;
+  mesh.name = "bushes";
+  scatterInstances(mesh, 70, { minR: 4, maxR: 29, extraRadius: 0.6, minScale: 0.8, maxScale: 1.5 });
+  return mesh;
+}
+
+function buildRocks() {
+  const geometry = new THREE.DodecahedronGeometry(0.16, 0);
+  const material = new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 1 });
+  const mesh = new THREE.InstancedMesh(geometry, material, 55);
+  mesh.castShadow = true;
+  mesh.name = "rocks";
+  scatterInstances(mesh, 55, { minR: 3, maxR: 31, minScale: 0.6, maxScale: 1.8 });
+  return mesh;
+}
+
+function buildFoliage() {
+  worldGroup.add(buildFlowerPatch());
+  worldGroup.add(buildGrassTufts());
+  worldGroup.add(buildBushes());
+  worldGroup.add(buildRocks());
+}
+
+function buildDirtTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#9c7a4f";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  for (let i = 0; i < 260; i++) {
+    ctx.fillStyle = Math.random() < 0.5 ? "rgba(70,50,25,0.25)" : "rgba(190,160,110,0.25)";
+    ctx.fillRect(Math.random() * canvas.width, Math.random() * canvas.height, 2, 2);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+// A straight dirt-path strip from `from` to `to`, tiled lengthwise so it
+// reads as a worn trail rather than a stretched texture. Built as an
+// explicit ground-plane quad (same cross-section technique buildRiver()
+// uses) rather than a rotated PlaneGeometry, so there's no Euler-order
+// ambiguity about which way "flat and facing along the line" ends up.
+function buildPathSegment(from, to, width = 1.1) {
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  const length = Math.hypot(dx, dz);
+  const dir = new THREE.Vector3(dx, 0, dz).normalize();
+  const side = new THREE.Vector3(-dir.z, 0, dir.x).multiplyScalar(width / 2);
+
+  const positions = [
+    from.x - side.x, 0.012, from.z - side.z,
+    from.x + side.x, 0.012, from.z + side.z,
+    to.x - side.x, 0.012, to.z - side.z,
+    to.x + side.x, 0.012, to.z + side.z
+  ];
+  const uvs = [0, 0, 1, 0, 0, 1, 1, 1];
+  const indices = [0, 1, 2, 1, 3, 2];
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+
+  const texture = buildDirtTexture();
+  texture.repeat.set(1, Math.max(1, Math.round(length / width)));
+  const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 1, transparent: true, opacity: 0.85 });
+  return new THREE.Mesh(geometry, material);
+}
+
+function buildPaths() {
+  const spawn = new THREE.Vector3(0, 0, 0);
+  const destinations = [PLAYGROUND_CENTER, VILLAGE_CENTER, CAMP_CENTER, MARKET_CENTER, KITCHEN_CENTER];
+  destinations.forEach((dest) => worldGroup.add(buildPathSegment(spawn, dest)));
+}
+
+// A handful of small colorful quads drifting in loose figure-eight loops —
+// cheap ambient motion (no physics, no collision) that makes the world feel
+// inhabited even where nothing else is happening. Animated from the main
+// updateFn tick (registered/deregistered with the rest of World's state in
+// mount()/unmount()) rather than self-registering here, since a self-added
+// tick would have no owner to remove it and leak on every re-visit to World.
+function buildButterflies() {
+  const colors = [0xffb703, 0xf72585, 0x4cc9f0, 0xffffff, 0xa78bfa];
+  const group = new THREE.Group();
+  group.name = "butterflies";
+  const flutters = [];
+
+  for (let i = 0; i < 14; i++) {
+    const spot = randomFreeSpot(3, 26);
+    const wingGeo = new THREE.PlaneGeometry(0.05, 0.04);
+    const wingMat = new THREE.MeshBasicMaterial({
+      color: colors[i % colors.length],
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.95
+    });
+    const left = new THREE.Mesh(wingGeo, wingMat);
+    left.position.x = -0.02;
+    const right = new THREE.Mesh(wingGeo, wingMat);
+    right.position.x = 0.02;
+    const butterfly = new THREE.Group();
+    butterfly.add(left, right);
+    butterfly.position.set(spot.x, 0.4 + Math.random() * 0.6, spot.z);
+    group.add(butterfly);
+
+    flutters.push({
+      mesh: butterfly,
+      left,
+      right,
+      center: spot.clone(),
+      radius: 0.6 + Math.random() * 1.2,
+      speed: 0.4 + Math.random() * 0.5,
+      phase: Math.random() * Math.PI * 2,
+      baseY: 0.4 + Math.random() * 0.6
+    });
+  }
+
+  return { group, flutters };
+}
+
+function updateButterflies() {
+  if (!butterflies) return;
+  for (const f of butterflies.flutters) {
+    const t = elapsed * f.speed + f.phase;
+    f.mesh.position.x = f.center.x + Math.sin(t) * f.radius;
+    f.mesh.position.z = f.center.z + Math.sin(t * 2) * f.radius * 0.5;
+    f.mesh.position.y = f.baseY + Math.sin(t * 3) * 0.12;
+    f.mesh.rotation.y = t;
+    const flap = Math.sin(elapsed * 14 + f.phase) * 0.8;
+    f.left.rotation.y = flap;
+    f.right.rotation.y = -flap;
+  }
+}
+
 export function mount(scene) {
   sceneRef = scene;
   disposed = false;
@@ -1539,6 +1747,8 @@ export function mount(scene) {
   buildSky();
   buildTerrain();
   buildForest();
+  buildFoliage();
+  buildPaths();
   buildRiver();
   buildVillage();
   buildCamp();
@@ -1549,6 +1759,9 @@ export function mount(scene) {
   buildMarket();
   buildKitchen();
   refreshScoreboard();
+
+  butterflies = buildButterflies();
+  worldGroup.add(butterflies.group);
 
   // Rig-attached (unlike the playground scoreboard, which stays fixed in
   // world space) so the current objective stays readable no matter which
@@ -1587,6 +1800,7 @@ export function mount(scene) {
       flame.material.emissiveIntensity = 1.0 + Math.sin(elapsed * 13 + i * 2) * 0.35;
     });
     if (river) river.material.map?.offset.set(0, -elapsed * 0.05);
+    updateButterflies();
   };
   xrState.updatables.add(updateFn);
 
@@ -1642,6 +1856,7 @@ export function unmount() {
   props = [];
   campFlames = [];
   river = null;
+  butterflies = null;
   scoreboard = null;
   ringMarker = null;
   ringScore = 0;
