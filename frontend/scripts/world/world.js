@@ -498,6 +498,133 @@ function buildForest() {
   }
 }
 
+// Idyllic Fantasy Nature models ship as Unity assets: materials carry no
+// embedded texture reference at all (Unity links textures via its own
+// .mat/GUID database, never written into the FBX), so FBXLoader imports
+// every mesh with a blank/default material — hence textures are wired up
+// by hand here, matched by material name ("Trunk"/"Leaves") for the tree
+// or a flat per-model texture for single-material props. Each model also
+// ships 3 LOD variants (_LOD0/_LOD1/_LOD2) all present simultaneously in
+// the same file — without hiding LOD1/2, all three render stacked on top
+// of each other as an oversized, doubled-up blob.
+function keepOnlyLOD0(group) {
+  const meshes = [];
+  group.traverse((node) => { if (node.isMesh) meshes.push(node); });
+  if (!meshes.some((m) => /_LOD\d/i.test(m.name))) return; // no LODs to filter
+  meshes.forEach((m) => { if (!/_LOD0$/i.test(m.name)) m.visible = false; });
+}
+
+function loadNatureAssets() {
+  const loader = new FBXLoader();
+  const texLoader = new THREE.TextureLoader();
+  const tex = (name) => {
+    const t = texLoader.load(`${import.meta.env.BASE_URL}assets/models/world/idyllic-nature/${name}`);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+
+  const barkMap = tex("trees/Bark_Albedo.png");
+  const leavesMap = tex("trees/BroadleafTree_Leaves.png");
+  const rock1Map = tex("rocks/Rock_Big_01_Albedo.png");
+  const rock2Map = tex("rocks/Rock_Big_02_Albedo.png");
+  const bushMap = tex("bushes/Bush_Branch.png");
+  const flowerMap = tex("flowers/FlowerMeadow.png");
+
+  function applyTreeMaterials(group) {
+    group.traverse((node) => {
+      if (!node.isMesh || !node.visible) return;
+      const mats = Array.isArray(node.material) ? node.material : [node.material];
+      node.material = mats.map((mat) =>
+        /trunk/i.test(mat.name)
+          ? new THREE.MeshStandardMaterial({ map: barkMap, roughness: 0.9 })
+          // The leaf card texture itself is nearly white — a SpeedTree-style
+          // pack authored to be recolored via the material's own color
+          // (multiplied with the texture), not a full-color albedo on its own.
+          : new THREE.MeshStandardMaterial({ map: leavesMap, color: 0x4f8a3d, roughness: 0.8, alphaTest: 0.15, side: THREE.DoubleSide })
+      );
+    });
+  }
+
+  function applyFlatMaterial(group, map, { alphaCutout = false, tint = null } = {}) {
+    group.traverse((node) => {
+      if (!node.isMesh || !node.visible) return;
+      node.material = new THREE.MeshStandardMaterial({
+        map, color: tint ?? 0xffffff, roughness: 0.9,
+        transparent: alphaCutout, alphaTest: alphaCutout ? 0.5 : 0,
+        side: alphaCutout ? THREE.DoubleSide : THREE.FrontSide
+      });
+    });
+  }
+
+  function load(file) {
+    return new Promise((resolve) => {
+      loader.load(
+        `${import.meta.env.BASE_URL}assets/models/world/idyllic-nature/${file}`,
+        (group) => resolve(group),
+        undefined,
+        (err) => { console.warn(`Couldn't load ${file}:`, err.message); resolve(null); }
+      );
+    });
+  }
+
+  return Promise.all([
+    load("trees/BroadleafTree_01.fbx"),
+    load("trees/BroadleafTree_02.fbx"),
+    load("rocks/Cliff_01.fbx"),
+    load("rocks/Cliff_02.fbx"),
+    load("bushes/Bush_01_01.fbx"),
+    load("flowers/FlowerMeadow_Blue.fbx")
+  ]).then(([tree1, tree2, rock1, rock2, bush, flower]) => {
+    if (disposed) return null;
+    [tree1, tree2].forEach((g) => { if (g) { keepOnlyLOD0(g); applyTreeMaterials(g); g.traverse((n) => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; } }); } });
+    if (rock1) { keepOnlyLOD0(rock1); applyFlatMaterial(rock1, rock1Map); rock1.traverse((n) => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; } }); }
+    if (rock2) { keepOnlyLOD0(rock2); applyFlatMaterial(rock2, rock2Map); rock2.traverse((n) => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; } }); }
+    if (bush) { keepOnlyLOD0(bush); applyFlatMaterial(bush, bushMap, { alphaCutout: true, tint: 0x4f8a3d }); bush.traverse((n) => { if (n.isMesh) n.castShadow = true; }); }
+    if (flower) { keepOnlyLOD0(flower); applyFlatMaterial(flower, flowerMap, { alphaCutout: true }); }
+    return { trees: [tree1, tree2].filter(Boolean), rocks: [rock1, rock2].filter(Boolean), bush, flower };
+  });
+}
+
+// Scatters real Idyllic Fantasy Nature trees/rocks/bushes/flowers across
+// the walkable area as supplemental decoration alongside the existing
+// procedural conifer forest (buildForest()) — adds variety without
+// touching the already-working bulk tree coverage. Same fit-once/clone-
+// the-fitted-primary pattern used for creatures and static props: the
+// first placed instance gets the expensive fitAndGround() bounding-box
+// pass, every other instance is a cheap clone reusing that same scale.
+function scatterNatureModel(model, count, targetSize, { minDist = 1.2 } = {}) {
+  if (!model) return;
+  fitAndGround(model, targetSize);
+  const groundedY = model.position.y;
+  const placed = [];
+  for (let i = 0; i < count; i++) {
+    let spot = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidate = randomFreeSpot(6, 26, 1.0);
+      const tooClose = placed.some((p) => Math.hypot(candidate.x - p.x, candidate.z - p.z) < minDist);
+      if (!tooClose) { spot = candidate; break; }
+      spot = candidate;
+    }
+    placed.push(spot);
+    const instance = i === 0 ? model : model.clone(true);
+    instance.position.set(spot.x, groundedY, spot.z);
+    instance.rotation.y = Math.random() * Math.PI * 2;
+    worldGroup.add(instance);
+  }
+}
+
+function loadNatureScatter() {
+  return loadNatureAssets().then((assets) => {
+    if (!assets || disposed) return;
+    scatterNatureModel(assets.trees[0], 5, 3.2);
+    scatterNatureModel(assets.trees[1], 5, 3.0);
+    scatterNatureModel(assets.rocks[0], 5, 1.4);
+    scatterNatureModel(assets.rocks[1], 5, 1.3);
+    scatterNatureModel(assets.bush, 8, 0.8, { minDist: 0.8 });
+    scatterNatureModel(assets.flower, 6, 0.6, { minDist: 0.8 });
+  });
+}
+
 function buildHouse(x, z, rotationY) {
   const house = new THREE.Group();
   house.position.set(x, 0, z);
@@ -2274,7 +2401,7 @@ export function mount(scene) {
   // which is enough to follow the story without a floating text box.
 
   setStatus("Loading world…");
-  Promise.allSettled([loadCreatures(), loadCast(), loadStaticProps()]).then(() => { if (!disposed) setStatus(""); });
+  Promise.allSettled([loadCreatures(), loadCast(), loadStaticProps(), loadNatureScatter()]).then(() => { if (!disposed) setStatus(""); });
 
   document.addEventListener("keydown", handleKeyDown);
   document.addEventListener("keyup", handleKeyUp);
