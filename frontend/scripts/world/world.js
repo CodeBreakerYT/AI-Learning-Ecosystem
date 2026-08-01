@@ -183,31 +183,36 @@ const QUEST_STAGES = {
     title: "Go shopping",
     objective: "Find the market and price out two items for breakfast.",
     guideLocation: () => new THREE.Vector3(2, 0, 2),
-    guideLines: ["Morning! Let's get breakfast.", "Head to the market — the vendor needs two things priced out."]
+    guideLines: ["Morning! Let's get breakfast.", "Head to the market — the vendor needs two things priced out."],
+    guideFlavor: ["I'm Shinobu, by the way.", "I'll be around if you need pointing in the right direction."]
   },
   market: {
     title: "Go shopping",
     objective: "Work out each total and drop the right coin in the bowl, twice.",
     guideLocation: () => MARKET_CENTER.clone().add(new THREE.Vector3(-1.2, 0, 0.6)),
-    guideLines: ["Check the sign, work out the total,", "and drop the right coin in the bowl."]
+    guideLines: ["Check the sign, work out the total,", "and drop the right coin in the bowl."],
+    guideFlavor: ["Take your time with the math.", "The vendor's patient — mostly."]
   },
   golf: {
     title: "Prove your aim",
     objective: `Land ${RING_GOAL} throws in the glowing ring at the playground.`,
     guideLocation: () => PLAYGROUND_CENTER.clone().add(new THREE.Vector3(-1.2, 0, 1.2)),
-    guideLines: ["Breakfast sorted!", `Now land ${RING_GOAL} throws in that ring — crates, barrels, the ball, anything goes.`]
+    guideLines: ["Breakfast sorted!", `Now land ${RING_GOAL} throws in that ring — crates, barrels, the ball, anything goes.`],
+    guideFlavor: ["I used to be pretty good at this.", "Used to be."]
   },
   kitchen: {
     title: "Cook something",
     objective: "Mix the right ingredients at the kitchen counter.",
     guideLocation: () => KITCHEN_CENTER.clone().add(new THREE.Vector3(-1.2, 0, 0.6)),
-    guideLines: ["Great putt!", "One more thing — mix up today's recipe in the kitchen."]
+    guideLines: ["Great putt!", "One more thing — mix up today's recipe in the kitchen."],
+    guideFlavor: ["Don't improvise on the recipe.", "I'm speaking from experience."]
   },
   complete: {
     title: "All done!",
     objective: "You've earned a well-deserved break.",
     guideLocation: () => KITCHEN_CENTER.clone().add(new THREE.Vector3(1.2, 0, 0.6)),
-    guideLines: ["You did it — potatoes bought,", "aim proven, and dinner's cooking. Nice work today!"]
+    guideLines: ["You did it — potatoes bought,", "aim proven, and dinner's cooking. Nice work today!"],
+    guideFlavor: ["Feel free to keep exploring.", "There might still be a gem or two out there."]
   }
 };
 
@@ -958,10 +963,12 @@ function showDialogue(roamer) {
 
 function setGuideDialogue() {
   if (!guideRoamer) return;
-  // A single-entry line-set list — the guide's dialogue is already reactive
-  // to quest stage, so there's nothing to cycle through, just wrap it to
-  // match the [lineSet, lineSet, ...] shape showDialogue() expects.
-  guideRoamer.dialogue = [QUEST_STAGES[questStage].guideLines];
+  const stage = QUEST_STAGES[questStage];
+  // The objective always comes first (so a first click always tells you
+  // what to do), then a bit of personality on the second click — reset to
+  // index 0 on every stage change so a fresh objective is never buried
+  // behind leftover flavor-line cycling from the previous stage.
+  guideRoamer.dialogue = stage.guideFlavor ? [stage.guideLines, stage.guideFlavor] : [stage.guideLines];
   guideRoamer.dialogueIndex = 0;
 }
 
