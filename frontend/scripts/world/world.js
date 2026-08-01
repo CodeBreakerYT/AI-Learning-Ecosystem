@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import * as CANNON from "cannon-es";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 import { Sky } from "three/addons/objects/Sky.js";
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 import { xrState } from "../core/xrState.js";
@@ -567,6 +568,35 @@ function buildVillage() {
   }
 }
 
+// A real modeled building (Crimson-Valor's medieval_building.fbx) placed
+// near the village center as a landmark the procedural box-houses ring
+// around, instead of every building in the village being a generated box.
+// Loaded async and added on top of buildVillage()'s already-complete ring
+// (rather than folding it into that synchronous function) so a slow/failed
+// load never leaves the village half-built.
+function loadVillageLandmark() {
+  return new Promise((resolve) => {
+    new FBXLoader().load(
+      `${import.meta.env.BASE_URL}assets/models/world/crimson-valor/house3/medieval_building.fbx`,
+      (group) => {
+        if (disposed) { resolve(); return; }
+        fitAndGround(group, 4.5);
+        // Offset toward the back of the village (away from the spawn-facing
+        // approach path) and well inside the 6.2m house ring so it reads as
+        // a central landmark, not another ring entry.
+        group.position.x = VILLAGE_CENTER.x - 2.0;
+        group.position.z = VILLAGE_CENTER.z + 1.8;
+        group.rotation.y = 0.6;
+        group.traverse((node) => { if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; } });
+        worldGroup.add(group);
+        resolve();
+      },
+      undefined,
+      (err) => { console.warn("Couldn't load medieval_building.fbx:", err.message); resolve(); }
+    );
+  });
+}
+
 // A few houses right near the player's spawn point so the world doesn't
 // open on empty grass — same spacing math as buildVillage() (3 houses on a
 // 3m ring clears the ~3.6m worst-case footprint with room to spare).
@@ -1099,6 +1129,43 @@ function addQuestMarker(model, symbol, color) {
   return marker;
 }
 
+// Loads a named FBX character — Shinobu/Bob/Neko from the Crimson-Valor
+// asset pack — where the mesh+skeleton lives in one FBX and idle/walk
+// animations are separately exported Mixamo-style clip-only FBX files
+// sharing the same bone names. Returns a "kit" shaped exactly like a
+// GLTFLoader-based humanKit ({ scene, idleClip, walkClip }) so it drops
+// straight into the same spawnCharacter()/cloneSkinned() path below —
+// AnimationMixer only needs matching bone names, not the same Object3D
+// instances, so binding a separately-loaded clip to this mesh works fine.
+function loadFBXCharacterKit(dir, meshFile, animFiles = {}) {
+  const loader = new FBXLoader();
+  const load = (file) => new Promise((resolve) => {
+    loader.load(
+      `${import.meta.env.BASE_URL}assets/models/world/${dir}/${file}`,
+      (group) => resolve(group),
+      undefined,
+      (err) => { console.warn(`Couldn't load ${dir}/${file}:`, err.message); resolve(null); }
+    );
+  });
+
+  return load(meshFile).then((mesh) => {
+    if (!mesh) return null;
+    return Promise.all(Object.entries(animFiles).map(([key, file]) =>
+      file ? load(file).then((group) => [key, group?.animations?.[0] ?? null]) : Promise.resolve([key, null])
+    )).then((entries) => {
+      const clips = Object.fromEntries(entries);
+      // Some single-file characters carry their own embedded animation
+      // instead of separate clip files — fall back to that if present.
+      const embedded = mesh.animations?.[0] ?? null;
+      return {
+        scene: mesh,
+        idleClip: clips.idle ?? embedded ?? null,
+        walkClip: clips.walk ?? embedded ?? null
+      };
+    });
+  });
+}
+
 // Loads two distinct human models (Xbot + CesiumMan) once each and spawns
 // every character — ambient village/camp NPCs, the market vendor, the story
 // guide — as clones alternating between them, instead of everyone in the
@@ -1106,6 +1173,9 @@ function addQuestMarker(model, symbol, color) {
 // mannequin (not armor, unlike three.js's Soldier.glb), and CesiumMan is the
 // well-known Khronos glTF sample human — different enough silhouettes that
 // the village actually reads as having more than one person in it.
+// The Crimson-Valor asset pack adds three named characters on top — Shinobu
+// (the story guide), Bob and Neko (extra "sidequest" NPCs with their own
+// dialogue) — for real named faces instead of only generic mannequins.
 function loadCast() {
   const loader = new GLTFLoader();
   const humanFiles = ["Xbot.glb", "CesiumMan.glb"];
@@ -1119,80 +1189,137 @@ function loadCast() {
     );
   }));
 
-  return Promise.all(loadPromises).then(([xbotGltf, cesiumGltf]) => {
-    if (disposed) return;
+  // Named Crimson-Valor characters load in parallel with the generic crowd
+  // — Shinobu becomes the story guide (replacing the generic tinted
+  // mannequin), Bob and Neko are extra NPCs with their own personalities.
+  const shinobuPromise = loadFBXCharacterKit("crimson-valor/guide", "Shinobu.fbx", {
+    idle: "Shinobu@Idle.fbx",
+    walk: "Shinobu@Walking.fbx"
+  });
+  const bobPromise = loadFBXCharacterKit("crimson-valor/bob", "Bob.fbx", { idle: "Bob_Idle.fbx" });
+  const nekoPromise = loadFBXCharacterKit("crimson-valor/neko", "Neko.fbx", { idle: "Neko_Idle.fbx", walk: "Neko_Run.fbx" });
 
-    // Each "kit" bundles a base scene with its own idle/walk clips — models
-    // with only one animation (CesiumMan) just reuse it for both states,
-    // the same fallback already used for the single-clip creature models.
-    const humanKits = [xbotGltf, cesiumGltf].filter(Boolean).map((gltf) => {
-      const clipFor = (name) => gltf.animations.find((c) => c.name.toLowerCase() === name);
-      return {
-        scene: gltf.scene,
-        idleClip: clipFor("idle") ?? gltf.animations[0],
-        walkClip: clipFor("walk") ?? gltf.animations[0]
-      };
-    });
-    if (humanKits.length === 0) return; // both failed to load — nothing to spawn
+  // The market vendor — a static (unanimated) Indian food-cart model from
+  // the Lumora pack, replacing the generic mannequin that used to stand in
+  // for "the vendor" with an actual vendor-and-stall model.
+  const vendorPromise = new Promise((resolve) => {
+    new FBXLoader().load(
+      `${import.meta.env.BASE_URL}assets/models/world/lumora/food-vendor/FoodVentor.fbx`,
+      (group) => resolve({ scene: group, idleClip: null, walkClip: null }),
+      undefined,
+      (err) => { console.warn("Couldn't load FoodVentor.fbx:", err.message); resolve(null); }
+    );
+  });
 
-    let kitIndex = 0;
-    function spawnCharacter(spawnPos, { radius = 2.5, speed = 0.35, dialogue = null, tint = null, marker = null, kit: forcedKit = null } = {}) {
-      const kit = forcedKit ?? humanKits[kitIndex++ % humanKits.length];
-      const model = cloneSkinned(kit.scene);
-      fitAndGround(model, 1.7);
-      // x/z only — preserve the y fitAndGround() just computed so the
-      // character's feet sit on the ground instead of snapping to y=0.
-      model.position.x = spawnPos.x;
-      model.position.z = spawnPos.z;
-      const home = new THREE.Vector3(spawnPos.x, model.position.y, spawnPos.z);
-      model.rotation.y = Math.random() * Math.PI * 2;
-      model.traverse((node) => { if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; } });
-      if (tint) tintModel(model, tint);
-      worldGroup.add(model);
+  return Promise.all([Promise.all(loadPromises), shinobuPromise, bobPromise, nekoPromise, vendorPromise])
+    .then(([[xbotGltf, cesiumGltf], shinobuKit, bobKit, nekoKit, vendorKit]) => {
+      if (disposed) return;
 
-      const mixer = new THREE.AnimationMixer(model);
-      const idle = kit.idleClip ? mixer.clipAction(kit.idleClip) : null;
-      const walk = kit.walkClip ? mixer.clipAction(kit.walkClip) : null;
-      idle?.play();
-      mixers.push(mixer);
+      // Each "kit" bundles a base scene with its own idle/walk clips — models
+      // with only one animation (CesiumMan) just reuse it for both states,
+      // the same fallback already used for the single-clip creature models.
+      const humanKits = [xbotGltf, cesiumGltf].filter(Boolean).map((gltf) => {
+        const clipFor = (name) => gltf.animations.find((c) => c.name.toLowerCase() === name);
+        return {
+          scene: gltf.scene,
+          idleClip: clipFor("idle") ?? gltf.animations[0],
+          walkClip: clipFor("walk") ?? gltf.animations[0]
+        };
+      });
+      if (humanKits.length === 0) return; // both failed to load — nothing to spawn
 
-      registerRoamer(model, { home, radius, speed, actions: { idle, walk }, dialogue });
-      const roamer = roamers[roamers.length - 1];
-      roamer.current = "idle";
-      if (marker) roamer.marker = addQuestMarker(model, marker.symbol, marker.color);
+      let kitIndex = 0;
+      function spawnCharacter(spawnPos, { radius = 2.5, speed = 0.35, dialogue = null, tint = null, marker = null, kit: forcedKit = null, targetSize = 1.7 } = {}) {
+        const kit = forcedKit ?? humanKits[kitIndex++ % humanKits.length];
+        const model = cloneSkinned(kit.scene);
+        fitAndGround(model, targetSize);
+        // x/z only — preserve the y fitAndGround() just computed so the
+        // character's feet sit on the ground instead of snapping to y=0.
+        model.position.x = spawnPos.x;
+        model.position.z = spawnPos.z;
+        const home = new THREE.Vector3(spawnPos.x, model.position.y, spawnPos.z);
+        model.rotation.y = Math.random() * Math.PI * 2;
+        model.traverse((node) => { if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; } });
+        if (tint) tintModel(model, tint);
+        worldGroup.add(model);
 
-      interaction.add(model, {
-        onSelect: () => showDialogue(roamer),
-        onHoverStart: () => { model.scale.multiplyScalar(1.05); },
-        onHoverEnd: () => { model.scale.multiplyScalar(1 / 1.05); }
+        const mixer = new THREE.AnimationMixer(model);
+        const idle = kit.idleClip ? mixer.clipAction(kit.idleClip) : null;
+        const walk = kit.walkClip ? mixer.clipAction(kit.walkClip) : null;
+        idle?.play();
+        mixers.push(mixer);
+
+        registerRoamer(model, { home, radius, speed, actions: { idle, walk }, dialogue });
+        const roamer = roamers[roamers.length - 1];
+        roamer.current = "idle";
+        if (marker) roamer.marker = addQuestMarker(model, marker.symbol, marker.color);
+
+        interaction.add(model, {
+          onSelect: () => showDialogue(roamer),
+          onHoverStart: () => { model.scale.multiplyScalar(1.05); },
+          onHoverEnd: () => { model.scale.multiplyScalar(1 / 1.05); }
+        });
+
+        return roamer;
+      }
+
+      NPC_SPOTS.forEach((spot, i) => {
+        spawnCharacter(spot.center.clone().add(spot.offset), { dialogue: NPC_LINES[i % NPC_LINES.length] });
       });
 
-      return roamer;
-    }
+      if (vendorKit) {
+        spawnCharacter(MARKET_CENTER.clone().add(new THREE.Vector3(0, 0, 0.9)), {
+          radius: 0,
+          speed: 0,
+          targetSize: 1.3,
+          kit: vendorKit,
+          dialogue: [
+            ["Fresh potatoes!", "Check the sign for today's price."],
+            ["Take your time doing the math.", "I'm not going anywhere."],
+            ["Best potatoes this side of the river.", "Trust me."]
+          ]
+        });
+      }
 
-    NPC_SPOTS.forEach((spot, i) => {
-      spawnCharacter(spot.center.clone().add(spot.offset), { dialogue: NPC_LINES[i % NPC_LINES.length] });
-    });
+      // Sidequest NPCs — named characters with their own little personality,
+      // tucked near camp and the village well rather than in the generic
+      // NPC_SPOTS rotation, so they read as distinct people worth seeking out.
+      if (bobKit) {
+        spawnCharacter(CAMP_CENTER.clone().add(new THREE.Vector3(-2.4, 0, -1.6)), {
+          radius: 1.5,
+          speed: 0.3,
+          kit: bobKit,
+          dialogue: [
+            ["Hey there! Name's Bob.", "Just enjoying the campfire."],
+            ["You collecting gems too?", "I swear I saw one glinting by the river."],
+            ["Good to see a new face around camp.", "Stick around a while."]
+          ]
+        });
+      }
+      if (nekoKit) {
+        spawnCharacter(VILLAGE_CENTER.clone().add(new THREE.Vector3(-3.2, 0, -2.0)), {
+          radius: 1.8,
+          speed: 0.4,
+          kit: nekoKit,
+          dialogue: [
+            ["Oh — hi! I'm Neko.", "Just wandering around today."],
+            ["This village has more corners than it looks.", "Worth poking around."],
+            ["Tired from all this walking.", "But it's a nice kind of tired."]
+          ]
+        });
+      }
 
-    spawnCharacter(MARKET_CENTER.clone().add(new THREE.Vector3(0, 0, 0.9)), {
-      radius: 0.3,
-      speed: 0.2,
-      dialogue: [
-        ["Fresh potatoes!", "Check the sign for today's price."],
-        ["Take your time doing the math.", "I'm not going anywhere."],
-        ["Best potatoes this side of the river.", "Trust me."]
-      ]
+      guideRoamer = spawnCharacter(QUEST_STAGES[questStage].guideLocation(), {
+        radius: 0.3,
+        speed: 0.2,
+        marker: { symbol: "!", color: "#fbbf24" },
+        // Shinobu, a real named character, stands in for the guide — falls
+        // back to the old tinted-mannequin look only if Shinobu failed to load.
+        kit: shinobuKit ?? humanKits[0],
+        tint: shinobuKit ? null : new THREE.Color(0x8fb3ff)
+      });
+      setGuideDialogue();
     });
-
-    guideRoamer = spawnCharacter(QUEST_STAGES[questStage].guideLocation(), {
-      radius: 0.3,
-      speed: 0.2,
-      tint: new THREE.Color(0x8fb3ff),
-      marker: { symbol: "!", color: "#fbbf24" },
-      kit: humanKits[0] // always the same recognizable model+tint, session to session
-    });
-    setGuideDialogue();
-  });
 }
 
 function buildCrate() {
@@ -2247,7 +2374,7 @@ export function mount(scene) {
   // which is enough to follow the story without a floating text box.
 
   setStatus("Loading world…");
-  Promise.allSettled([loadCreatures(), loadCast(), loadStaticProps()]).then(() => { if (!disposed) setStatus(""); });
+  Promise.allSettled([loadCreatures(), loadCast(), loadStaticProps(), loadVillageLandmark()]).then(() => { if (!disposed) setStatus(""); });
 
   document.addEventListener("keydown", handleKeyDown);
   document.addEventListener("keyup", handleKeyUp);
