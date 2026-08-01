@@ -2058,7 +2058,22 @@ function refreshScoreboard() {
   ]);
 }
 
-function handleKeyDown(event) { keysDown.add(event.code); }
+const MOVE_KEYS = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
+function handleKeyDown(event) {
+  keysDown.add(event.code);
+  // The guide spawns at (2,0,2) — right in front of the player, and often
+  // right behind the tutorial panel's own bottom-center screen position.
+  // The panel is a real DOM element and intercepts clicks anywhere within
+  // its rectangle regardless of what's rendered behind it in the canvas,
+  // so a player who reads the "click people to talk" instruction and then
+  // immediately tries clicking the guide can find those clicks swallowed
+  // by the panel they just read it on. Auto-collapse it the first time the
+  // player actually starts walking — by then they've either read it or
+  // are moving on, and the guide (or anyone else) is reachable again.
+  if (MOVE_KEYS.has(event.code) && guidePanelEl() && !guidePanelEl().hidden) {
+    handleGuideClose();
+  }
+}
 function handleKeyUp(event) { keysDown.delete(event.code); }
 
 function applyKeyboardLocomotion(delta) {
