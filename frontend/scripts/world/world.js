@@ -452,52 +452,6 @@ function buildMountains() {
   }
 }
 
-function buildTree(x, z) {
-  const tree = new THREE.Group();
-  const trunkHeight = 0.9 + Math.random() * 0.5;
-  const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.06, 0.09, trunkHeight, 8),
-    new THREE.MeshStandardMaterial({ color: 0x5b4128, roughness: 0.9 })
-  );
-  trunk.position.y = trunkHeight / 2;
-  trunk.castShadow = true;
-  tree.add(trunk);
-
-  const foliageMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(0x2f6b3a).offsetHSL(0, 0, (Math.random() - 0.5) * 0.08),
-    roughness: 0.9
-  });
-  const tiers = 2 + Math.floor(Math.random() * 2);
-  let y = trunkHeight;
-  for (let i = 0; i < tiers; i++) {
-    const size = (1 - i * 0.22) * (0.55 + Math.random() * 0.2);
-    const foliage = new THREE.Mesh(new THREE.ConeGeometry(size, size * 1.4, 8), foliageMat);
-    foliage.position.y = y + size * 0.6;
-    foliage.castShadow = true;
-    tree.add(foliage);
-    y += size * 0.75;
-  }
-
-  tree.position.set(x, 0, z);
-  tree.rotation.y = Math.random() * Math.PI * 2;
-  return tree;
-}
-
-function buildForest() {
-  const placed = [];
-  for (let i = 0; i < 46; i++) {
-    let spot = null;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const candidate = randomFreeSpot(6, 26, 1.0);
-      const tooClose = placed.some((p) => Math.hypot(candidate.x - p.x, candidate.z - p.z) < 1.3);
-      if (!tooClose) { spot = candidate; break; }
-      spot = candidate; // last attempt still gets used even if a bit close — rare, not worth an infinite loop
-    }
-    placed.push(spot);
-    worldGroup.add(buildTree(spot.x, spot.z));
-  }
-}
-
 // Idyllic Fantasy Nature models ship as Unity assets: materials carry no
 // embedded texture reference at all (Unity links textures via its own
 // .mat/GUID database, never written into the FBX), so FBXLoader imports
@@ -616,8 +570,13 @@ function scatterNatureModel(model, count, targetSize, { minDist = 1.2 } = {}) {
 function loadNatureScatter() {
   return loadNatureAssets().then((assets) => {
     if (!assets || disposed) return;
-    scatterNatureModel(assets.trees[0], 5, 3.2);
-    scatterNatureModel(assets.trees[1], 5, 3.0);
+    // Real trees are now the whole forest (not mixed in with the old
+    // procedural cone trees) — mixing a flat-shaded cartoon silhouette
+    // with a textured, semi-realistic one in the same stand of trees read
+    // as an inconsistent, "unnatural" clash. One consistent tree style at
+    // roughly the old forest's density (46 trees, same 6–26m band) instead.
+    scatterNatureModel(assets.trees[0], 23, 3.2, { minDist: 1.8 });
+    scatterNatureModel(assets.trees[1], 23, 3.0, { minDist: 1.8 });
     scatterNatureModel(assets.rocks[0], 5, 1.4);
     scatterNatureModel(assets.rocks[1], 5, 1.3);
     scatterNatureModel(assets.bush, 8, 0.8, { minDist: 0.8 });
@@ -1225,6 +1184,75 @@ function addQuestMarker(model, symbol, color) {
   marker.position.y = 2.3;
   model.add(marker);
   return marker;
+}
+
+// A wandering MutantGolem (Crimson-Valor) roaming the mountain foothills —
+// unlike Shinobu/Bob/Neko, this one's mesh and its separately-exported
+// walk/idle clips were verified to share the same Mixamo skeleton (37/38
+// bone names matched exactly), so the animation actually plays instead of
+// freezing in a T-pose. Also the only character candidate whose FBX
+// references its textures by filename (Mutant_diffuse/normal.png) rather
+// than through Unity's separate .mat/GUID system, so FBXLoader resolves
+// them automatically — no manual material wiring needed, unlike the
+// Idyllic Fantasy Nature props.
+function loadMutantGolem() {
+  const dir = "crimson-valor/mutant-golem";
+  const loader = new FBXLoader();
+  const load = (file) => new Promise((resolve) => {
+    loader.load(
+      `${import.meta.env.BASE_URL}assets/models/world/${dir}/${file}`,
+      (group) => resolve(group),
+      undefined,
+      (err) => { console.warn(`Couldn't load ${dir}/${file}:`, err.message); resolve(null); }
+    );
+  });
+
+  return Promise.all([load("MutantGolem.fbx"), load("Mutant_Walking.fbx"), load("Mutant_Idle.fbx")])
+    .then(([mesh, walkGroup, idleGroup]) => {
+      if (!mesh || disposed) return;
+      const walkClip = walkGroup?.animations?.[0] ?? null;
+      const idleClip = idleGroup?.animations?.[0] ?? null;
+
+      // Two instances wandering the mountain foothills, well outside the
+      // village/camp/market exclusion zones — a "something's out there"
+      // atmosphere touch a couple of NPC lines already hint at.
+      const spots = [
+        new THREE.Vector3(26, 0, -22),
+        new THREE.Vector3(-28, 0, -18)
+      ];
+      spots.forEach((home, i) => {
+        const model = i === 0 ? mesh : cloneSkinned(mesh);
+        fitAndGround(model, 2.2);
+        model.position.x = home.x;
+        model.position.z = home.z;
+        model.rotation.y = Math.random() * Math.PI * 2;
+        model.traverse((node) => { if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; } });
+        worldGroup.add(model);
+
+        const mixer = new THREE.AnimationMixer(model);
+        const idle = idleClip ? mixer.clipAction(idleClip) : null;
+        const walk = walkClip ? mixer.clipAction(walkClip) : null;
+        idle?.play();
+        mixers.push(mixer);
+
+        registerRoamer(model, {
+          home, radius: 6, speed: 0.6,
+          actions: { idle, walk },
+          dialogue: [
+            ["A low, rumbling growl.", "It doesn't seem interested in you."],
+            ["The ground shakes slightly with each step.", "Best to keep some distance."]
+          ]
+        });
+        const roamer = roamers[roamers.length - 1];
+        roamer.current = "idle";
+
+        interaction.add(model, {
+          onSelect: () => showDialogue(roamer),
+          onHoverStart: () => { model.scale.multiplyScalar(1.05); },
+          onHoverEnd: () => { model.scale.multiplyScalar(1 / 1.05); }
+        });
+      });
+    });
 }
 
 // Loads two distinct human models (Xbot + CesiumMan) once each and spawns
@@ -2375,7 +2403,6 @@ export function mount(scene) {
 
   buildSky();
   buildTerrain();
-  buildForest();
   buildFoliage();
   buildPaths();
   buildRiver();
@@ -2401,7 +2428,7 @@ export function mount(scene) {
   // which is enough to follow the story without a floating text box.
 
   setStatus("Loading world…");
-  Promise.allSettled([loadCreatures(), loadCast(), loadStaticProps(), loadNatureScatter()]).then(() => { if (!disposed) setStatus(""); });
+  Promise.allSettled([loadCreatures(), loadCast(), loadStaticProps(), loadNatureScatter(), loadMutantGolem()]).then(() => { if (!disposed) setStatus(""); });
 
   document.addEventListener("keydown", handleKeyDown);
   document.addEventListener("keyup", handleKeyUp);
