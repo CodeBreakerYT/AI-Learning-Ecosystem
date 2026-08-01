@@ -226,6 +226,9 @@ const KITCHEN_RECIPE = { Flour: 2, Water: 1, Salt: 1 };
 
 const statusEl = () => document.getElementById("world-status");
 const enterVRBtn = () => document.getElementById("world-enter-vr");
+const guidePanelEl = () => document.getElementById("world-guide-panel");
+const guideCloseBtn = () => document.getElementById("world-guide-close");
+const guideReopenBtn = () => document.getElementById("world-guide-reopen");
 
 let sceneRef = null;
 let worldGroup = null;
@@ -2090,6 +2093,24 @@ const MAX_PITCH = 1.3; // radians, just short of straight up/down
 
 function handleContextMenu(event) { event.preventDefault(); }
 
+// The "How to play" card starts open on every visit and can be dismissed
+// (it was previously a permanent paragraph pinned to the bottom of the
+// screen for the whole session) — closing it swaps in a small "?" button
+// so the controls/objective explanation stays one click away instead of
+// gone for good.
+function handleGuideClose() {
+  const panel = guidePanelEl();
+  const reopen = guideReopenBtn();
+  if (panel) panel.hidden = true;
+  if (reopen) reopen.hidden = false;
+}
+function handleGuideReopen() {
+  const panel = guidePanelEl();
+  const reopen = guideReopenBtn();
+  if (panel) panel.hidden = false;
+  if (reopen) reopen.hidden = true;
+}
+
 function handleLookPointerDown(event) {
   if (event.button !== 2 || xrState.renderer.xr.isPresenting) return;
   lookActive = true;
@@ -2451,6 +2472,13 @@ export function mount(scene) {
   document.addEventListener("keydown", handleKeyDown);
   document.addEventListener("keyup", handleKeyUp);
 
+  // Reset to "open" every visit — a dismissal from a previous session
+  // shouldn't carry over and leave a first-time player without it.
+  if (guidePanelEl()) guidePanelEl().hidden = false;
+  if (guideReopenBtn()) guideReopenBtn().hidden = true;
+  guideCloseBtn()?.addEventListener("click", handleGuideClose);
+  guideReopenBtn()?.addEventListener("click", handleGuideReopen);
+
   cameraPitch = 0;
   xrState.renderer.domElement.addEventListener("contextmenu", handleContextMenu);
   xrState.renderer.domElement.addEventListener("pointerdown", handleLookPointerDown);
@@ -2505,6 +2533,9 @@ export function unmount() {
   document.removeEventListener("keydown", handleKeyDown);
   document.removeEventListener("keyup", handleKeyUp);
   keysDown.clear();
+
+  guideCloseBtn()?.removeEventListener("click", handleGuideClose);
+  guideReopenBtn()?.removeEventListener("click", handleGuideReopen);
 
   xrState.renderer.domElement.removeEventListener("contextmenu", handleContextMenu);
   xrState.renderer.domElement.removeEventListener("pointerdown", handleLookPointerDown);

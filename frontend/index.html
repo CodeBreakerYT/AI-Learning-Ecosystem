@@ -134,14 +134,29 @@
   </section>
 
   <section id="ui-world" class="ui-overlay ui-page">
-    <div class="learn-panel">
-      <h3>A whole world to walk around in</h3>
-      <p>A village, a camp, a forest, a river, mountains, and a story to follow — walk with your thumbstick (or WASD here), look around with the right mouse button, and grab things with the trigger or grip. Find the guide (the one with the floating "!") to get started.</p>
+    <div class="learn-panel world-guide-panel" id="world-guide-panel">
+      <button type="button" class="world-guide-close" id="world-guide-close" aria-label="Close guide">✕</button>
+      <h3>How to play</h3>
+      <div class="world-guide-grid">
+        <div class="world-guide-section">
+          <span class="world-guide-label">Move &amp; look</span>
+          <p>WASD (or thumbstick) to walk. Right-click and drag to look around — in VR, just turn your head.</p>
+        </div>
+        <div class="world-guide-section">
+          <span class="world-guide-label">Interact</span>
+          <p>Click people to talk, or grab objects (trigger/grip in VR) to pick them up and throw them.</p>
+        </div>
+        <div class="world-guide-section">
+          <span class="world-guide-label">Objective</span>
+          <p>Find the guide — she has a floating "!" above her head — and follow the story from there.</p>
+        </div>
+      </div>
       <div class="learn-actions">
         <button type="button" id="world-enter-vr" class="btn btn-primary btn-small">Enter VR 🥽</button>
         <p class="status-text" id="world-status"></p>
       </div>
     </div>
+    <button type="button" class="world-guide-reopen" id="world-guide-reopen" hidden aria-label="Open guide">?</button>
   </section>
 
   <section id="ui-vrSetup" class="ui-overlay ui-page">
