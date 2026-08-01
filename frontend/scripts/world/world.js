@@ -1214,65 +1214,6 @@ function addQuestMarker(model, symbol, color) {
 // than through Unity's separate .mat/GUID system, so FBXLoader resolves
 // them automatically — no manual material wiring needed, unlike the
 // Idyllic Fantasy Nature props.
-// A handful of real cliff models (the same Idyllic Fantasy Nature "Cliff"
-// mesh that didn't work as a foreground rock — too big/prominent next to
-// everything else at human scale) scaled way up and dropped into the
-// mountain ring instead, where that same bulk reads as a real peak rather
-// than an oversized boulder. Doesn't replace buildMountains()'s procedural
-// cone clusters (still needed for cheap bulk coverage around the whole
-// ring) — just adds a few textured, detailed peaks among them. No shadow-
-// casting: they're background scenery at the map edge, not worth the cost.
-function loadMountainCliffs() {
-  const loader = new FBXLoader();
-  const texLoader = new THREE.TextureLoader();
-  const tex = (name) => {
-    const t = texLoader.load(`${import.meta.env.BASE_URL}assets/models/world/idyllic-nature/mountains/${name}`);
-    t.colorSpace = THREE.SRGBColorSpace;
-    return t;
-  };
-  const maps = [tex("Rock_Big_01_Albedo.png"), tex("Rock_Big_02_Albedo.png")];
-
-  const load = (file) => new Promise((resolve) => {
-    loader.load(
-      `${import.meta.env.BASE_URL}assets/models/world/idyllic-nature/mountains/${file}`,
-      (group) => resolve(group),
-      undefined,
-      (err) => { console.warn(`Couldn't load ${file}:`, err.message); resolve(null); }
-    );
-  });
-
-  return Promise.all([load("Cliff_01.fbx"), load("Cliff_02.fbx")]).then(([cliff1, cliff2]) => {
-    if (disposed) return;
-    const templates = [cliff1, cliff2].filter(Boolean);
-    templates.forEach((cliff, i) => {
-      keepOnlyLOD0(cliff);
-      cliff.traverse((n) => {
-        if (!n.isMesh) return;
-        n.material = new THREE.MeshStandardMaterial({ map: maps[i], roughness: 1 });
-      });
-      // Matched to the existing procedural peaks' own height range (6-12m,
-      // see buildMountains()) rather than picked independently — the first
-      // pass used 16-22m and, despite sitting at the same distance as the
-      // rest of the mountain ring, loomed disproportionately over
-      // everything else nearby purely from being taller than anything
-      // else in the scene.
-      fitAndGround(cliff, 9 + Math.random() * 3);
-    });
-    if (templates.length === 0) return;
-
-    const count = 6;
-    for (let i = 0; i < count; i++) {
-      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
-      const dist = 34 + Math.random() * 5;
-      const template = templates[i % templates.length];
-      const instance = i < templates.length ? template : template.clone(true);
-      instance.position.set(Math.cos(angle) * dist, template.position.y, Math.sin(angle) * dist);
-      instance.rotation.y = Math.random() * Math.PI * 2;
-      worldGroup.add(instance);
-    }
-  });
-}
-
 function loadMutantGolem() {
   const dir = "crimson-valor/mutant-golem";
   const loader = new FBXLoader();
@@ -2505,7 +2446,7 @@ export function mount(scene) {
   // which is enough to follow the story without a floating text box.
 
   setStatus("Loading world…");
-  Promise.allSettled([loadCreatures(), loadCast(), loadStaticProps(), loadNatureScatter(), loadMutantGolem(), loadMountainCliffs()]).then(() => { if (!disposed) setStatus(""); });
+  Promise.allSettled([loadCreatures(), loadCast(), loadStaticProps(), loadNatureScatter(), loadMutantGolem()]).then(() => { if (!disposed) setStatus(""); });
 
   document.addEventListener("keydown", handleKeyDown);
   document.addEventListener("keyup", handleKeyUp);
