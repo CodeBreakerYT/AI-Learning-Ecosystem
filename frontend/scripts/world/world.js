@@ -1163,22 +1163,6 @@ const NPC_SPOTS = [
   { center: CAMP_CENTER, offset: new THREE.Vector3(-2.0, 0, 1.1) }
 ];
 
-// Clones a model's materials so a per-character tint (the guide) doesn't
-// bleed onto every other SkeletonUtils.clone sharing the same original
-// material instances.
-function tintModel(model, color) {
-  model.traverse((node) => {
-    if (!node.isMesh || !node.material) return;
-    const materials = Array.isArray(node.material) ? node.material : [node.material];
-    const tinted = materials.map((mat) => {
-      const clone = mat.clone();
-      clone.color?.multiply(color);
-      return clone;
-    });
-    node.material = Array.isArray(node.material) ? tinted : tinted[0];
-  });
-}
-
 function addQuestMarker(model, symbol, color) {
   const marker = createLabel(symbol, { width: 0.3, height: 0.3, fontSize: 200, color });
   marker.position.y = 2.3;
@@ -1213,6 +1197,14 @@ function loadMutantGolem() {
       const walkClip = walkGroup?.animations?.[0] ?? null;
       const idleClip = idleGroup?.animations?.[0] ?? null;
 
+      // Fit the shared template ONCE, then clone it per instance — fitting
+      // each instance individually was the bug that shipped: instance 0
+      // used `mesh` directly (mutating its scale in place), so instance 1's
+      // cloneSkinned(mesh) cloned an already-shrunk mesh and fitAndGround
+      // ran a second time on top of that, compounding into a giant.
+      fitAndGround(mesh, 2.2);
+      const groundedY = mesh.position.y;
+
       // Two instances wandering the mountain foothills, well outside the
       // village/camp/market exclusion zones — a "something's out there"
       // atmosphere touch a couple of NPC lines already hint at.
@@ -1222,9 +1214,7 @@ function loadMutantGolem() {
       ];
       spots.forEach((home, i) => {
         const model = i === 0 ? mesh : cloneSkinned(mesh);
-        fitAndGround(model, 2.2);
-        model.position.x = home.x;
-        model.position.z = home.z;
+        model.position.set(home.x, groundedY, home.z);
         model.rotation.y = Math.random() * Math.PI * 2;
         model.traverse((node) => { if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; } });
         worldGroup.add(model);
@@ -1255,38 +1245,47 @@ function loadMutantGolem() {
     });
 }
 
-// Loads two distinct human models (Xbot + CesiumMan) once each and spawns
-// every character — ambient village/camp NPCs, the market vendor, the story
-// guide — as clones alternating between them, instead of everyone in the
-// world being the exact same reused mannequin. Xbot is a plain civilian
-// mannequin (not armor, unlike three.js's Soldier.glb), and CesiumMan is the
-// well-known Khronos glTF sample human — different enough silhouettes that
-// the village actually reads as having more than one person in it.
-function loadCast() {
-  const loader = new GLTFLoader();
-  const humanFiles = ["Xbot.glb", "CesiumMan.glb"];
-
-  const loadPromises = humanFiles.map((file) => new Promise((resolve) => {
+// Loads a named FBX character where the mesh+skeleton lives in one FBX and
+// idle/walk animations are separately exported clip-only FBX files sharing
+// the same bone names. Returns a kit shaped like { scene, idleClip,
+// walkClip } — AnimationMixer binds tracks by bone name, not by object
+// identity, so a clip loaded from a different file animates the mesh fine
+// as long as the skeleton naming matches (verified per-character below).
+function loadFBXCharacterKit(dir, meshFile, animFiles = {}) {
+  const loader = new FBXLoader();
+  const load = (file) => new Promise((resolve) => {
     loader.load(
-      `${import.meta.env.BASE_URL}assets/models/world/${file}`,
-      (gltf) => resolve(gltf),
+      `${import.meta.env.BASE_URL}assets/models/world/${dir}/${file}`,
+      (group) => resolve(group),
       undefined,
-      (err) => { console.warn(`Couldn't load ${file}:`, err.message); resolve(null); }
+      (err) => { console.warn(`Couldn't load ${dir}/${file}:`, err.message); resolve(null); }
     );
-  }));
+  });
+  return load(meshFile).then((mesh) => {
+    if (!mesh) return null;
+    return Promise.all(Object.entries(animFiles).map(([key, file]) =>
+      file ? load(file).then((g) => [key, g?.animations?.[0] ?? null]) : Promise.resolve([key, null])
+    )).then((entries) => {
+      const clips = Object.fromEntries(entries);
+      return { scene: mesh, idleClip: clips.idle ?? null, walkClip: clips.walk ?? null };
+    });
+  });
+}
 
-  // The market vendor — a static (unanimated) Indian food-cart model from
-  // the Lumora pack, replacing the generic mannequin that used to stand in
-  // for "the vendor" with an actual vendor-and-stall model. (Crimson-Valor's
-  // named characters — Shinobu/Bob/Neko — were tried here too, but their
-  // mesh FBX and their separately-exported idle/walk FBX turned out to use
-  // two different, incompatible skeletons: the mesh has no bone names
-  // matching Mixamo's `mixamorig:*` convention used by the clip files, so
-  // every track silently fails to bind and the character stands frozen in
-  // its bind-pose T-pose. Fixing that needs proper animation retargeting
-  // (Blender, which isn't available here) — reverted rather than ship a
-  // set of frozen mannequins. FoodVentor has no animation dependency at
-  // all, so it isn't affected by this problem.)
+// Every character in the village — Shinobu as the story guide, Bob filling
+// the ambient crowd, an Indian food-cart vendor at the market — all real
+// named models from proj_sample instead of generic glTF sample mannequins.
+// Neko was tried too but its mesh uses a different skeleton than its own
+// exported animations (0/38 bone names matched, vs. Shinobu's 33/34 and
+// Bob's 43/44) and stood frozen in a T-pose — left out. Bob only ships an
+// idle clip (no walk), so he's placed stationary (radius: 0) rather than
+// roaming, same as the vendor.
+function loadCast() {
+  const shinobuPromise = loadFBXCharacterKit("crimson-valor/guide", "Shinobu.fbx", {
+    idle: "Shinobu@Idle.fbx",
+    walk: "Shinobu@Walking.fbx"
+  });
+  const bobPromise = loadFBXCharacterKit("crimson-valor/bob", "Bob.fbx", { idle: "Bob_Idle.fbx" });
   const vendorPromise = new Promise((resolve) => {
     new FBXLoader().load(
       `${import.meta.env.BASE_URL}assets/models/world/lumora/food-vendor/FoodVentor.fbx`,
@@ -1296,26 +1295,12 @@ function loadCast() {
     );
   });
 
-  return Promise.all([Promise.all(loadPromises), vendorPromise])
-    .then(([[xbotGltf, cesiumGltf], vendorKit]) => {
+  return Promise.all([shinobuPromise, bobPromise, vendorPromise])
+    .then(([shinobuKit, bobKit, vendorKit]) => {
       if (disposed) return;
 
-      // Each "kit" bundles a base scene with its own idle/walk clips — models
-      // with only one animation (CesiumMan) just reuse it for both states,
-      // the same fallback already used for the single-clip creature models.
-      const humanKits = [xbotGltf, cesiumGltf].filter(Boolean).map((gltf) => {
-        const clipFor = (name) => gltf.animations.find((c) => c.name.toLowerCase() === name);
-        return {
-          scene: gltf.scene,
-          idleClip: clipFor("idle") ?? gltf.animations[0],
-          walkClip: clipFor("walk") ?? gltf.animations[0]
-        };
-      });
-      if (humanKits.length === 0) return; // both failed to load — nothing to spawn
-
-      let kitIndex = 0;
-      function spawnCharacter(spawnPos, { radius = 2.5, speed = 0.35, dialogue = null, tint = null, marker = null, kit: forcedKit = null, targetSize = 1.7 } = {}) {
-        const kit = forcedKit ?? humanKits[kitIndex++ % humanKits.length];
+      function spawnCharacter(spawnPos, { radius = 2.5, speed = 0.35, dialogue = null, marker = null, kit, targetSize = 1.7 } = {}) {
+        if (!kit) return null;
         const model = cloneSkinned(kit.scene);
         fitAndGround(model, targetSize);
         // x/z only — preserve the y fitAndGround() just computed so the
@@ -1325,7 +1310,6 @@ function loadCast() {
         const home = new THREE.Vector3(spawnPos.x, model.position.y, spawnPos.z);
         model.rotation.y = Math.random() * Math.PI * 2;
         model.traverse((node) => { if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; } });
-        if (tint) tintModel(model, tint);
         worldGroup.add(model);
 
         const mixer = new THREE.AnimationMixer(model);
@@ -1349,31 +1333,30 @@ function loadCast() {
       }
 
       NPC_SPOTS.forEach((spot, i) => {
-        spawnCharacter(spot.center.clone().add(spot.offset), { dialogue: NPC_LINES[i % NPC_LINES.length] });
+        spawnCharacter(spot.center.clone().add(spot.offset), {
+          radius: 0, speed: 0, kit: bobKit, dialogue: NPC_LINES[i % NPC_LINES.length]
+        });
       });
 
-      if (vendorKit) {
-        spawnCharacter(MARKET_CENTER.clone().add(new THREE.Vector3(0, 0, 0.9)), {
-          radius: 0,
-          speed: 0,
-          targetSize: 1.3,
-          kit: vendorKit,
-          dialogue: [
-            ["Fresh potatoes!", "Check the sign for today's price."],
-            ["Take your time doing the math.", "I'm not going anywhere."],
-            ["Best potatoes this side of the river.", "Trust me."]
-          ]
-        });
-      }
+      spawnCharacter(MARKET_CENTER.clone().add(new THREE.Vector3(0, 0, 0.9)), {
+        radius: 0,
+        speed: 0,
+        targetSize: 1.3,
+        kit: vendorKit,
+        dialogue: [
+          ["Fresh potatoes!", "Check the sign for today's price."],
+          ["Take your time doing the math.", "I'm not going anywhere."],
+          ["Best potatoes this side of the river.", "Trust me."]
+        ]
+      });
 
       guideRoamer = spawnCharacter(QUEST_STAGES[questStage].guideLocation(), {
         radius: 0.3,
         speed: 0.2,
-        tint: new THREE.Color(0x8fb3ff),
         marker: { symbol: "!", color: "#fbbf24" },
-        kit: humanKits[0] // always the same recognizable model+tint, session to session
+        kit: shinobuKit
       });
-      setGuideDialogue();
+      if (guideRoamer) setGuideDialogue();
     });
 }
 
