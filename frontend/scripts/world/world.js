@@ -465,7 +465,16 @@ function keepOnlyLOD0(group) {
   const meshes = [];
   group.traverse((node) => { if (node.isMesh) meshes.push(node); });
   if (!meshes.some((m) => /_LOD\d/i.test(m.name))) return; // no LODs to filter
-  meshes.forEach((m) => { if (!/_LOD0$/i.test(m.name)) m.visible = false; });
+  // Actually remove (not just hide) LOD1/LOD2 — every instance of every
+  // scattered tree/rock/bush carries its own copy of these, and merely
+  // setting .visible = false still leaves them in the graph for matrix
+  // updates, frustum culling, and shadow passes every frame. With 46 real
+  // trees this alone was roughly halving the framerate.
+  meshes.forEach((m) => {
+    if (/_LOD0$/i.test(m.name)) return;
+    m.geometry?.dispose();
+    m.parent?.remove(m);
+  });
 }
 
 function loadNatureAssets() {
@@ -530,10 +539,15 @@ function loadNatureAssets() {
     load("flowers/FlowerMeadow_Blue.fbx")
   ]).then(([tree1, tree2, rock1, rock2, bush, flower]) => {
     if (disposed) return null;
+    // Shadow-casting is expensive (each caster adds to every shadow-map
+    // pass) and this scatter can run into the dozens of instances — only
+    // the trees are prominent enough to be worth it; ground-scatter rocks/
+    // bush/flowers still receive shadows so they don't look like they're
+    // floating, they just don't cast their own.
     [tree1, tree2].forEach((g) => { if (g) { keepOnlyLOD0(g); applyTreeMaterials(g); g.traverse((n) => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; } }); } });
-    if (rock1) { keepOnlyLOD0(rock1); applyFlatMaterial(rock1, rock1Map); rock1.traverse((n) => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; } }); }
-    if (rock2) { keepOnlyLOD0(rock2); applyFlatMaterial(rock2, rock2Map); rock2.traverse((n) => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; } }); }
-    if (bush) { keepOnlyLOD0(bush); applyFlatMaterial(bush, bushMap, { alphaCutout: true, tint: 0x4f8a3d }); bush.traverse((n) => { if (n.isMesh) n.castShadow = true; }); }
+    if (rock1) { keepOnlyLOD0(rock1); applyFlatMaterial(rock1, rock1Map); rock1.traverse((n) => { if (n.isMesh) n.receiveShadow = true; }); }
+    if (rock2) { keepOnlyLOD0(rock2); applyFlatMaterial(rock2, rock2Map); rock2.traverse((n) => { if (n.isMesh) n.receiveShadow = true; }); }
+    if (bush) { keepOnlyLOD0(bush); applyFlatMaterial(bush, bushMap, { alphaCutout: true, tint: 0x4f8a3d }); }
     if (flower) { keepOnlyLOD0(flower); applyFlatMaterial(flower, flowerMap, { alphaCutout: true }); }
     return { trees: [tree1, tree2].filter(Boolean), rocks: [rock1, rock2].filter(Boolean), bush, flower };
   });
@@ -570,17 +584,17 @@ function scatterNatureModel(model, count, targetSize, { minDist = 1.2 } = {}) {
 function loadNatureScatter() {
   return loadNatureAssets().then((assets) => {
     if (!assets || disposed) return;
-    // Real trees are now the whole forest (not mixed in with the old
-    // procedural cone trees) — mixing a flat-shaded cartoon silhouette
-    // with a textured, semi-realistic one in the same stand of trees read
-    // as an inconsistent, "unnatural" clash. One consistent tree style at
-    // roughly the old forest's density (46 trees, same 6–26m band) instead.
-    scatterNatureModel(assets.trees[0], 23, 3.2, { minDist: 1.8 });
-    scatterNatureModel(assets.trees[1], 23, 3.0, { minDist: 1.8 });
-    scatterNatureModel(assets.rocks[0], 5, 1.4);
-    scatterNatureModel(assets.rocks[1], 5, 1.3);
-    scatterNatureModel(assets.bush, 8, 0.8, { minDist: 0.8 });
-    scatterNatureModel(assets.flower, 6, 0.6, { minDist: 0.8 });
+    // Real trees replaced the old procedural cone forest (mixing the two
+    // styles read as "unnatural" — see prior commit). They're much heavier
+    // to render than a flat-shaded cone was, though (real geometry +
+    // textures + shadows) — 46 of them roughly halved the framerate, so
+    // density comes down from the old forest's count to keep things smooth.
+    scatterNatureModel(assets.trees[0], 12, 3.2, { minDist: 2.2 });
+    scatterNatureModel(assets.trees[1], 12, 3.0, { minDist: 2.2 });
+    scatterNatureModel(assets.rocks[0], 4, 1.4);
+    scatterNatureModel(assets.rocks[1], 4, 1.3);
+    scatterNatureModel(assets.bush, 6, 0.8, { minDist: 0.8 });
+    scatterNatureModel(assets.flower, 5, 0.6, { minDist: 0.8 });
   });
 }
 
@@ -1205,18 +1219,18 @@ function loadMutantGolem() {
       fitAndGround(mesh, 2.2);
       const groundedY = mesh.position.y;
 
-      // Two instances wandering the mountain foothills, well outside the
+      // One instance wandering the mountain foothills, well outside the
       // village/camp/market exclusion zones — a "something's out there"
-      // atmosphere touch a couple of NPC lines already hint at.
-      const spots = [
-        new THREE.Vector3(26, 0, -22),
-        new THREE.Vector3(-28, 0, -18)
-      ];
+      // atmosphere touch an NPC line already hints at. Just one (not two)
+      // and no shadow-casting — it's a heavy, high-poly mesh, and its
+      // AnimationMixer/skinning update runs every frame regardless of
+      // whether it's ever on screen.
+      const spots = [new THREE.Vector3(26, 0, -22)];
       spots.forEach((home, i) => {
         const model = i === 0 ? mesh : cloneSkinned(mesh);
         model.position.set(home.x, groundedY, home.z);
         model.rotation.y = Math.random() * Math.PI * 2;
-        model.traverse((node) => { if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; } });
+        model.traverse((node) => { if (node.isMesh) node.receiveShadow = true; });
         worldGroup.add(model);
 
         const mixer = new THREE.AnimationMixer(model);
