@@ -488,8 +488,6 @@ function loadNatureAssets() {
 
   const barkMap = tex("trees/Bark_Albedo.png");
   const leavesMap = tex("trees/BroadleafTree_Leaves.png");
-  const rock1Map = tex("rocks/Rock_Big_01_Albedo.png");
-  const rock2Map = tex("rocks/Rock_Big_02_Albedo.png");
   const bushMap = tex("bushes/Bush_Branch.png");
   const flowerMap = tex("flowers/FlowerMeadow.png");
 
@@ -533,23 +531,22 @@ function loadNatureAssets() {
   return Promise.all([
     load("trees/BroadleafTree_01.fbx"),
     load("trees/BroadleafTree_02.fbx"),
-    load("rocks/Cliff_01.fbx"),
-    load("rocks/Cliff_02.fbx"),
     load("bushes/Bush_01_01.fbx"),
     load("flowers/FlowerMeadow_Blue.fbx")
-  ]).then(([tree1, tree2, rock1, rock2, bush, flower]) => {
+  ]).then(([tree1, tree2, bush, flower]) => {
     if (disposed) return null;
     // Shadow-casting is expensive (each caster adds to every shadow-map
     // pass) and this scatter can run into the dozens of instances — only
-    // the trees are prominent enough to be worth it; ground-scatter rocks/
-    // bush/flowers still receive shadows so they don't look like they're
-    // floating, they just don't cast their own.
+    // the trees are prominent enough to be worth it; ground-scatter bush/
+    // flowers still receive shadows so they don't look like they're
+    // floating, they just don't cast their own. The real Cliff rocks were
+    // dropped entirely — too large/prominent next to everything else, and
+    // the existing small procedural rocks (buildRocks(), still in the
+    // scene) already cover that role at the right low-poly scale.
     [tree1, tree2].forEach((g) => { if (g) { keepOnlyLOD0(g); applyTreeMaterials(g); g.traverse((n) => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; } }); } });
-    if (rock1) { keepOnlyLOD0(rock1); applyFlatMaterial(rock1, rock1Map); rock1.traverse((n) => { if (n.isMesh) n.receiveShadow = true; }); }
-    if (rock2) { keepOnlyLOD0(rock2); applyFlatMaterial(rock2, rock2Map); rock2.traverse((n) => { if (n.isMesh) n.receiveShadow = true; }); }
     if (bush) { keepOnlyLOD0(bush); applyFlatMaterial(bush, bushMap, { alphaCutout: true, tint: 0x4f8a3d }); }
     if (flower) { keepOnlyLOD0(flower); applyFlatMaterial(flower, flowerMap, { alphaCutout: true }); }
-    return { trees: [tree1, tree2].filter(Boolean), rocks: [rock1, rock2].filter(Boolean), bush, flower };
+    return { trees: [tree1, tree2].filter(Boolean), bush, flower };
   });
 }
 
@@ -591,8 +588,6 @@ function loadNatureScatter() {
     // density comes down from the old forest's count to keep things smooth.
     scatterNatureModel(assets.trees[0], 12, 3.2, { minDist: 2.2 });
     scatterNatureModel(assets.trees[1], 12, 3.0, { minDist: 2.2 });
-    scatterNatureModel(assets.rocks[0], 4, 1.4);
-    scatterNatureModel(assets.rocks[1], 4, 1.3);
     scatterNatureModel(assets.bush, 6, 0.8, { minDist: 0.8 });
     scatterNatureModel(assets.flower, 5, 0.6, { minDist: 0.8 });
   });
@@ -935,7 +930,18 @@ function showDialogue(roamer) {
 
   if (!roamer.dialoguePanel) {
     const panel = createTextPanel({ width: 1.3, height: 0.4, fontSize: 26, border: "rgba(251, 191, 36, 0.85)" });
-    panel.position.set(0, 2.1, 0);
+    // Counter-scale — same fix as addQuestMarker() above. This is the
+    // actual "unable to interact" bug: clicking an NPC WAS finding and
+    // triggering the hit correctly (confirmed via direct instrumentation
+    // of interaction.js's pick()), but the panel is a child of roamer.root,
+    // and the new FBX characters have a ~0.01 scale (vs. ~1.0 for the old
+    // glTF ones) to normalize their hundreds-of-raw-units source size down
+    // to 1.7m. A literal "position.y = 2.1" child collapses to ~2cm above
+    // the character's origin and the panel itself shrinks to ~1.3cm wide —
+    // it WAS opening, just too small and misplaced to ever notice.
+    const inv = 1 / (roamer.root.scale.x || 1);
+    panel.scale.setScalar(inv);
+    panel.position.set(0, 2.1 * inv, 0);
     roamer.root.add(panel);
     roamer.dialoguePanel = panel;
   }
@@ -1179,7 +1185,15 @@ const NPC_SPOTS = [
 
 function addQuestMarker(model, symbol, color) {
   const marker = createLabel(symbol, { width: 0.3, height: 0.3, fontSize: 200, color });
-  marker.position.y = 2.3;
+  // Counter-scale: the marker is a child of `model`, whose own scale varies
+  // wildly by source asset — near 1.0 for glTF characters authored in
+  // meters, ~0.01 for the FBX characters (authored at hundreds of raw
+  // units, e.g. centimeters). Without this, "float 2.3 units above" and
+  // the marker's own 0.3-unit size both collapse to an imperceptible
+  // fraction of a centimeter once multiplied by a 0.01 parent scale.
+  const inv = 1 / (model.scale.x || 1);
+  marker.scale.setScalar(inv);
+  marker.position.y = 2.3 * inv;
   model.add(marker);
   return marker;
 }
@@ -1193,6 +1207,65 @@ function addQuestMarker(model, symbol, color) {
 // than through Unity's separate .mat/GUID system, so FBXLoader resolves
 // them automatically — no manual material wiring needed, unlike the
 // Idyllic Fantasy Nature props.
+// A handful of real cliff models (the same Idyllic Fantasy Nature "Cliff"
+// mesh that didn't work as a foreground rock — too big/prominent next to
+// everything else at human scale) scaled way up and dropped into the
+// mountain ring instead, where that same bulk reads as a real peak rather
+// than an oversized boulder. Doesn't replace buildMountains()'s procedural
+// cone clusters (still needed for cheap bulk coverage around the whole
+// ring) — just adds a few textured, detailed peaks among them. No shadow-
+// casting: they're background scenery at the map edge, not worth the cost.
+function loadMountainCliffs() {
+  const loader = new FBXLoader();
+  const texLoader = new THREE.TextureLoader();
+  const tex = (name) => {
+    const t = texLoader.load(`${import.meta.env.BASE_URL}assets/models/world/idyllic-nature/mountains/${name}`);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  const maps = [tex("Rock_Big_01_Albedo.png"), tex("Rock_Big_02_Albedo.png")];
+
+  const load = (file) => new Promise((resolve) => {
+    loader.load(
+      `${import.meta.env.BASE_URL}assets/models/world/idyllic-nature/mountains/${file}`,
+      (group) => resolve(group),
+      undefined,
+      (err) => { console.warn(`Couldn't load ${file}:`, err.message); resolve(null); }
+    );
+  });
+
+  return Promise.all([load("Cliff_01.fbx"), load("Cliff_02.fbx")]).then(([cliff1, cliff2]) => {
+    if (disposed) return;
+    const templates = [cliff1, cliff2].filter(Boolean);
+    templates.forEach((cliff, i) => {
+      keepOnlyLOD0(cliff);
+      cliff.traverse((n) => {
+        if (!n.isMesh) return;
+        n.material = new THREE.MeshStandardMaterial({ map: maps[i], roughness: 1 });
+      });
+      // Matched to the existing procedural peaks' own height range (6-12m,
+      // see buildMountains()) rather than picked independently — the first
+      // pass used 16-22m and, despite sitting at the same distance as the
+      // rest of the mountain ring, loomed disproportionately over
+      // everything else nearby purely from being taller than anything
+      // else in the scene.
+      fitAndGround(cliff, 9 + Math.random() * 3);
+    });
+    if (templates.length === 0) return;
+
+    const count = 6;
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
+      const dist = 34 + Math.random() * 5;
+      const template = templates[i % templates.length];
+      const instance = i < templates.length ? template : template.clone(true);
+      instance.position.set(Math.cos(angle) * dist, template.position.y, Math.sin(angle) * dist);
+      instance.rotation.y = Math.random() * Math.PI * 2;
+      worldGroup.add(instance);
+    }
+  });
+}
+
 function loadMutantGolem() {
   const dir = "crimson-valor/mutant-golem";
   const loader = new FBXLoader();
@@ -2425,7 +2498,7 @@ export function mount(scene) {
   // which is enough to follow the story without a floating text box.
 
   setStatus("Loading world…");
-  Promise.allSettled([loadCreatures(), loadCast(), loadStaticProps(), loadNatureScatter(), loadMutantGolem()]).then(() => { if (!disposed) setStatus(""); });
+  Promise.allSettled([loadCreatures(), loadCast(), loadStaticProps(), loadNatureScatter(), loadMutantGolem(), loadMountainCliffs()]).then(() => { if (!disposed) setStatus(""); });
 
   document.addEventListener("keydown", handleKeyDown);
   document.addEventListener("keyup", handleKeyUp);
