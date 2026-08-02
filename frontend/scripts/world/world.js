@@ -96,6 +96,47 @@ const CREATURES = [
   { file: "ButterflyModel.glb", targetSize: 0.12, extra: 8, flying: true, altitude: [0.3, 0.9], radius: 4, speed: 0.5 }
 ];
 
+// One-line flavor reactions for clicking/grabbing something that isn't an
+// NPC — keyed by the same basename used in CREATURES/STATIC_PROPS file
+// fields (minus extension) so both loaders can share one lookup. Several
+// lines per entry, cycled round-robin per model instance (see
+// addAmbientInteraction()) so repeat clicks on the same animal don't just
+// echo the same toast forever.
+const AMBIENT_LINES = {
+  Flamingo: ["A flamingo, unbothered by your presence.", "It cranes its neck and keeps flying."],
+  Parrot: ["Squawk!", "It circles once, unimpressed."],
+  Stork: ["It glides past without a glance.", "Storks mind their own business."],
+  Horse: ["The horse snorts and shifts its weight.", "It seems used to visitors."],
+  Fox: ["The fox eyes you, then trots off.", "Quick and a little shy."],
+  Cow: ["A slow, patient moo.", "It keeps chewing, unbothered."],
+  Dog: ["Tail wag.", "It sniffs at you curiously."],
+  Giraffe: ["It looks down at you from a great height.", "Too tall to be bothered by much."],
+  ButterflyModel: ["A butterfly flits past your hand.", "Delicate wings catch the light."],
+  Cat: ["The cat blinks slowly and looks away.", "It's not interested. Cats rarely are."],
+  Chicken: ["Cluck.", "It pecks at the ground near your feet."],
+  Ladybug: ["A tiny ladybug, minding its own business."],
+  Prop_Wagon: ["An old wagon, still sturdy.", "Looks like it's hauled a lot of crops."],
+  Prop_Crate: ["Just a crate.", "Feels solid — could probably be moved."]
+};
+
+// Wires click/hover feedback onto a non-NPC prop or creature: hover scales
+// it up slightly (matching the NPC hover feel from loadCast/loadMutantGolem)
+// and a click shows a short toast, cycling through AMBIENT_LINES so the
+// same model doesn't repeat itself every time. Falls back to a generic line
+// for anything not in the map instead of silently doing nothing.
+function addAmbientInteraction(model, speciesKey) {
+  const lines = AMBIENT_LINES[speciesKey] ?? ["Nothing special about this one."];
+  let index = 0;
+  interaction.add(model, {
+    onSelect: () => {
+      showToast(lines[index % lines.length], "#a3e635");
+      index += 1;
+    },
+    onHoverStart: () => { model.scale.multiplyScalar(1.05); },
+    onHoverEnd: () => { model.scale.multiplyScalar(1 / 1.05); }
+  });
+}
+
 // Cat/Chicken/Ladybug ship with no baked animation clips (unlike the rest of
 // CREATURES) — registering them as roamers would just slide them around the
 // ground with no walk cycle to play, so they're placed once as static scene
@@ -343,7 +384,7 @@ function buildGrassTexture() {
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(24, 24);
+  texture.repeat.set(36, 36);
   texture.anisotropy = 4;
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
@@ -389,6 +430,14 @@ function buildSky() {
   uniforms.sunPosition.value.copy(sun);
   worldGroup.add(sky);
 
+  // A single directional light leaves every surface facing away from the
+  // sun pure black (no bounce/ambient term in three.js's lighting model) —
+  // mountains, tree canopies and house walls on the far side all rendered
+  // as flat black silhouettes. A hemisphere light fills that in with sky/
+  // ground colored ambient, same as outdoor scenes get from atmosphere.
+  const hemiLight = new THREE.HemisphereLight(0xcfe0f5, 0x4a5a3d, 0.9);
+  worldGroup.add(hemiLight);
+
   const sunLight = new THREE.DirectionalLight(0xfff2e0, 1.4);
   sunLight.position.copy(sun).multiplyScalar(20).add(PLAYGROUND_CENTER);
   sunLight.target.position.copy(PLAYGROUND_CENTER);
@@ -411,7 +460,7 @@ function buildSky() {
 
 function buildTerrain() {
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(80, 80, 1, 1),
+    new THREE.PlaneGeometry(120, 120, 1, 1),
     new THREE.MeshStandardMaterial({ map: buildGrassTexture(), roughness: 1 })
   );
   ground.rotation.x = -Math.PI / 2;
@@ -432,7 +481,11 @@ function buildMountains() {
 
   for (let i = 0; i < 14; i++) {
     const angle = (i / 14) * Math.PI * 2;
-    const dist = 32 + Math.random() * 6;
+    // Village/camp zones sit ~20-24 units off-origin themselves, so a ring
+    // this tight used to put mountains only ~10-15m past their edges —
+    // close enough to loom directly over the houses instead of reading as
+    // a distant treeline. Pushed out so the nearest zone still has room.
+    const dist = 46 + Math.random() * 8;
     const base = new THREE.Vector3(Math.cos(angle) * dist, 0, Math.sin(angle) * dist);
 
     const cluster = new THREE.Group();
@@ -453,7 +506,7 @@ function buildMountains() {
   // A tree-lined foothill band just inside the mountains, so the transition
   // from grass to peaks doesn't feel abrupt.
   for (let i = 0; i < 16; i++) {
-    const spot = randomFreeSpot(27, 31);
+    const spot = randomFreeSpot(40, 45);
     const foothill = new THREE.Mesh(new THREE.ConeGeometry(2.2 + Math.random(), 3 + Math.random() * 1.5, 7), treeMaterial);
     foothill.position.set(spot.x, 1.5, spot.z);
     worldGroup.add(foothill);
@@ -1074,6 +1127,7 @@ function loadCreatures() {
 
   const loadPromises = CREATURES.map(({ file, targetSize, extra = 0, flying = false, altitude = [0, 0], radius = 4, speed = 0.5, facingOffset = 0 }) =>
     new Promise((resolve) => {
+      const speciesKey = file.replace(/\.\w+$/, "");
       loader.load(
         `${import.meta.env.BASE_URL}assets/models/world/${file}`,
         (gltf) => {
@@ -1101,6 +1155,7 @@ function loadCreatures() {
             mixer.clipAction(idleClip).play();
             mixers.push(mixer);
           }
+          addAmbientInteraction(primary, speciesKey);
 
           // A few extra clones per species for a livelier world without
           // downloading more assets — SkeletonUtils.clone (not plain
@@ -1123,6 +1178,7 @@ function loadCreatures() {
               copyMixer.clipAction(idleClip).play();
               mixers.push(copyMixer);
             }
+            addAmbientInteraction(copy, speciesKey);
           }
           resolve();
         },
@@ -1145,6 +1201,7 @@ function loadStaticProps() {
 
   const loadPromises = STATIC_PROPS.map(({ file, targetSize, spots, rotationY }) =>
     new Promise((resolve) => {
+      const speciesKey = file.split("/").pop().replace(/\.\w+$/, "");
       loader.load(
         `${import.meta.env.BASE_URL}assets/models/world/${file}`,
         (gltf) => {
@@ -1160,6 +1217,7 @@ function loadStaticProps() {
             model.traverse((node) => { if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; } });
             worldGroup.add(model);
             bobbers.push({ model, baseY: model.position.y, phase: Math.random() * Math.PI * 2 });
+            addAmbientInteraction(model, speciesKey);
           });
           resolve();
         },
