@@ -1,10 +1,18 @@
 [build]
-  base = "frontend"
-  command = "npm run build"
-  publish = "dist"
+  publish = "Builds/WebGL"
 
-[build.environment]
-  # Firebase web config is public client-side configuration by design
-  # (security comes from Firestore rules + authorized domains), so exempt
-  # these keys from Netlify's secrets scanner instead of failing the deploy.
-  SECRETS_SCAN_OMIT_KEYS = "VITE_FIREBASE_API_KEY,VITE_FIREBASE_AUTH_DOMAIN,VITE_FIREBASE_PROJECT_ID,VITE_FIREBASE_STORAGE_BUCKET,VITE_FIREBASE_MESSAGING_SENDER_ID,VITE_FIREBASE_APP_ID"
+# Unity's WebGL build ships raw (uncompressed) .wasm/.data/.js by default in
+# this project (Player Settings -> Publishing Settings -> Compression Format
+# = Disabled) specifically so a static host can serve it with zero custom
+# Content-Encoding config - the classic Unity-WebGL-on-static-host gzip/
+# brotli mismatch bug this avoids. If that setting is ever switched back to
+# Gzip/Brotli, matching Content-Encoding headers would need to be added here.
+[[headers]]
+  for = "/*.wasm"
+  [headers.values]
+    Content-Type = "application/wasm"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

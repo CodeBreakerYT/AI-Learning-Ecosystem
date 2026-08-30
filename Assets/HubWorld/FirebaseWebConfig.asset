@@ -1,0 +1,20 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a67f51f20a6a42099990028ebcc8fe2b, type: 3}
+  m_Name: FirebaseWebConfig
+  m_EditorClassIdentifier: Assembly-CSharp::AILearningEcosystem.Hub.FirebaseWebConfig
+  apiKey: AIzaSyDEfoGndIjkGgqHrkhxzUEUiNVGRcJbDvY
+  authDomain: ai-learning-ecosystem.firebaseapp.com
+  projectId: ai-learning-ecosystem
+  storageBucket: ai-learning-ecosystem.firebasestorage.app
+  messagingSenderId: '629265521005'
+  appId: 1:629265521005:web:993c4a73bfcb9e94a36264

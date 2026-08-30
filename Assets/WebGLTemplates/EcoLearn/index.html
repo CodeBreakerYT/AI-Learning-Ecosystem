@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en-us">
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{{ PRODUCT_NAME }}}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="TemplateData/style.css">
+  <link rel="stylesheet" href="TemplateData/styles.css">
+</head>
+
+<body>
+  <div id="unity-container" class="unity-desktop">
+    <canvas id="unity-canvas" width={{{ WIDTH }}} height={{{ HEIGHT }}} tabindex="-1"></canvas>
+    <div id="unity-loading-bar">
+      <div id="unity-progress-bar-empty">
+        <div id="unity-progress-bar-full"></div>
+      </div>
+    </div>
+    <div id="unity-warning"> </div>
+  </div>
+
+  <!-- ============================================================
+       Everything below is EcoLearn's own Home/Login markup, copied
+       from EcoLearn/frontend/index.html (same ids/classes, same
+       styles.css) so it renders pixel-identical to the live site.
+       The VRSetup/Profile/Devices/Contact/logout/World parts of
+       EcoLearn's real nav don't apply here (no separate routes for
+       them - login goes straight to the subject picker, no separate
+       hub scene), but the Subjects tab does - it drives Unity via
+       SendMessage to the persistent "Nav Bridge" object (NavBridge.cs),
+       which survives every Unity scene load so it keeps working no
+       matter which minigame scene is currently active. Hidden until
+       login succeeds (a headset never sees this bar at all - only
+       the flat browser page does - see NavTabBar.cs for the in-VR
+       equivalent).
+       ============================================================ -->
+
+  <div class="bg-glow"></div>
+
+  <nav id="ui-nav" class="ui-overlay">
+    <div class="ui-brand">
+      <img src="TemplateData/logo.svg" alt="logo" class="ui-logo" />
+      <span class="ui-brand-name">AI Learning Ecosystem</span>
+    </div>
+    <div class="nav-links">
+      <button type="button" class="nav-btn nav-authed" id="nav-subjects">Subjects</button>
+    </div>
+  </nav>
+
+  <section id="ui-mainPage" class="ui-overlay ui-page is-active ui-hero">
+    <span class="ui-eyebrow">WebXR · Unity</span>
+    <h1>Step into the lesson.</h1>
+    <p>A WebGL-powered VR classroom you can explore on desktop, mobile, or a headset —
+      no install required. Log in, attach your headset, and step inside.</p>
+    <div class="ui-hero-actions">
+      <button class="btn btn-primary" type="button" id="btn-get-started">Get Started</button>
+      <button class="btn btn-ghost" type="button" id="btn-contact">Contact Us</button>
+      <button class="btn btn-ghost" type="button" id="btn-quit">Quit</button>
+    </div>
+  </section>
+
+  <section id="ui-login" class="ui-overlay ui-page">
+    <div class="ui-form auth-card">
+      <div class="auth-toggle">
+        <button type="button" class="auth-toggle-btn is-active" data-auth-tab="login">Login</button>
+        <button type="button" class="auth-toggle-btn" data-auth-tab="register">Register</button>
+      </div>
+
+      <form id="login-form" class="auth-panel is-active">
+        <label for="login-email">Email or username</label>
+        <input id="login-email" type="text" name="identifier" placeholder="you@example.com" autocomplete="username" required />
+        <label for="login-password">Password</label>
+        <input id="login-password" type="password" name="password" placeholder="••••••••" autocomplete="current-password" required />
+        <p class="ui-form-foot ui-form-foot-right"><button type="button" class="link-btn" id="login-forgot">Forgot password?</button></p>
+        <button type="submit" class="btn btn-primary">Sign In</button>
+        <div class="ui-divider"><span>or</span></div>
+        <button type="button" id="login-google" class="btn btn-google">
+          <img src="TemplateData/google-icon.svg" alt="" class="btn-icon" />
+          Continue with Google
+        </button>
+        <p class="status-text" id="login-status"></p>
+        <p class="ui-hint">Test credentials: <strong>admin</strong> / <strong>admin</strong></p>
+      </form>
+
+      <form id="register-form" class="auth-panel">
+        <label for="register-name">Name</label>
+        <input id="register-name" type="text" name="name" placeholder="Your name" autocomplete="name" required />
+        <label for="register-email">Email</label>
+        <input id="register-email" type="email" name="email" placeholder="you@example.com" autocomplete="email" required />
+        <label for="register-password">Password</label>
+        <input id="register-password" type="password" name="password" placeholder="••••••••" autocomplete="new-password" required minlength="6" />
+        <label for="register-confirm">Confirm password</label>
+        <input id="register-confirm" type="password" name="confirm" placeholder="••••••••" autocomplete="new-password" required minlength="6" />
+        <button type="submit" class="btn btn-primary">Create account</button>
+        <div class="ui-divider"><span>or</span></div>
+        <button type="button" id="register-google" class="btn btn-google">
+          <img src="TemplateData/google-icon.svg" alt="" class="btn-icon" />
+          Sign up with Google
+        </button>
+        <p class="status-text" id="register-status"></p>
+      </form>
+    </div>
+  </section>
+
+  <script>
+    // ---------------------------------------------------------------------
+    // Unity WebGL loader boilerplate (same shape as any Unity-generated
+    // template - see Lumora/Assets/WebGLTemplates/Neocortex/index.html)
+    // ---------------------------------------------------------------------
+    var unityGame;
+    var canvas = document.querySelector("#unity-canvas");
+    var loadingBar = document.querySelector("#unity-loading-bar");
+    var progressBarFull = document.querySelector("#unity-progress-bar-full");
+    var warningBanner = document.querySelector("#unity-warning");
+
+    function unityShowBanner(msg, type) {
+      function updateBannerVisibility() {
+        warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
+      }
+      var div = document.createElement('div');
+      div.innerHTML = msg;
+      warningBanner.appendChild(div);
+      if (type == 'error') div.style = 'background: red; padding: 10px;';
+      else {
+        if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
+        setTimeout(function () {
+          warningBanner.removeChild(div);
+          updateBannerVisibility();
+        }, 5000);
+      }
+      updateBannerVisibility();
+    }
+
+    var buildUrl = "Build";
+    var loaderUrl = buildUrl + "/{{{ LOADER_FILENAME }}}";
+    var config = {
+      dataUrl: buildUrl + "/{{{ DATA_FILENAME }}}",
+      frameworkUrl: buildUrl + "/{{{ FRAMEWORK_FILENAME }}}",
+      #if USE_THREADS
+      workerUrl: buildUrl + "/{{{ WORKER_FILENAME }}}",
+      #endif
+      #if USE_WASM
+      codeUrl: buildUrl + "/{{{ CODE_FILENAME }}}",
+      #endif
+      streamingAssetsUrl: "StreamingAssets",
+      companyName: JSON.stringify("/{{{COMPANY_NAME}}}"),
+      productName: JSON.stringify("/{{{PRODUCT_NAME}}}"),
+      productVersion: JSON.stringify("/{{{PRODUCT_VERSION}}}"),
+      showBanner: unityShowBanner,
+    };
+
+    canvas.style.width = "{{{ WIDTH }}}px";
+    canvas.style.height = "{{{ HEIGHT }}}px";
+    loadingBar.style.display = "block";
+
+    var loaderScript = document.createElement("script");
+    loaderScript.src = loaderUrl;
+    loaderScript.onload = () => {
+      createUnityInstance(canvas, config, (progress) => {
+        progressBarFull.style.width = 100 * progress + "%";
+      }).then((instance) => {
+        unityGame = instance;
+        loadingBar.style.display = "none";
+      }).catch((message) => {
+        alert(message);
+      });
+    };
+    document.body.appendChild(loaderScript);
+
+    // ---------------------------------------------------------------------
+    // Home / Login overlay - pure UI concerns (tab switching, show/hide)
+    // live here; form submissions forward into Unity via SendMessage, all
+    // the real logic (including the admin/admin bypass and Firebase calls)
+    // lives in C# - see StartAuthBridge.cs on the "Start Auth Bridge" object.
+    // ---------------------------------------------------------------------
+    var mainPage = document.getElementById("ui-mainPage");
+    var loginPage = document.getElementById("ui-login");
+    var navBar = document.getElementById("ui-nav");
+
+    // Subjects tab - only reachable once authenticated (nav-authed,
+    // revealed by hideOverlay() below), forwarded straight into the
+    // persistent "Nav Bridge" object so it works from any Unity scene.
+    document.getElementById("nav-subjects").addEventListener("click", () => {
+      if (unityGame) unityGame.SendMessage("Nav Bridge", "GoHome", "");
+    });
+
+    document.getElementById("btn-get-started").addEventListener("click", () => {
+      mainPage.classList.remove("is-active");
+      loginPage.classList.add("is-active");
+    });
+
+    // No payload needed - ReceiveQuit() just calls Application.Quit() (and
+    // stops Play mode in the Editor for testing). A real browser can't
+    // actually close its own tab from script for security reasons, so this
+    // only does anything meaningful in a native/standalone build - see
+    // StartAuthBridge.ReceiveQuit's own comment.
+    document.getElementById("btn-quit").addEventListener("click", () => {
+      if (unityGame) unityGame.SendMessage("Start Auth Bridge", "ReceiveQuit", "");
+    });
+
+    var toggleButtons = document.querySelectorAll(".auth-toggle-btn");
+    var authPanels = {
+      login: document.getElementById("login-form"),
+      register: document.getElementById("register-form")
+    };
+    toggleButtons.forEach((btn) => btn.addEventListener("click", () => {
+      var tab = btn.dataset.authTab;
+      toggleButtons.forEach((b) => b.classList.toggle("is-active", b.dataset.authTab === tab));
+      Object.entries(authPanels).forEach(([name, panel]) => panel.classList.toggle("is-active", name === tab));
+    }));
+
+    function setStatus(el, message, isError) {
+      el.textContent = message || "";
+      el.classList.toggle("is-error", !!isError);
+    }
+
+    // Submits before Unity finishes loading just no-op with a status message
+    // instead of throwing - unityGame is only set once createUnityInstance resolves.
+    function callUnity(method, payload, statusEl) {
+      if (!unityGame) {
+        setStatus(statusEl, "Still loading - try again in a moment.", true);
+        return;
+      }
+      unityGame.SendMessage("Start Auth Bridge", method, JSON.stringify(payload));
+    }
+
+    document.getElementById("login-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      var statusEl = document.getElementById("login-status");
+      var email = document.getElementById("login-email").value.trim();
+      var password = document.getElementById("login-password").value;
+      setStatus(statusEl, "Signing in...");
+      callUnity("ReceiveLoginSubmit", { email: email, password: password }, statusEl);
+    });
+
+    document.getElementById("register-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      var statusEl = document.getElementById("register-status");
+      var name = document.getElementById("register-name").value.trim();
+      var email = document.getElementById("register-email").value.trim();
+      var password = document.getElementById("register-password").value;
+      var confirm = document.getElementById("register-confirm").value;
+      if (password !== confirm) {
+        setStatus(statusEl, "Passwords don't match.", true);
+        return;
+      }
+      setStatus(statusEl, "Creating your account...");
+      callUnity("ReceiveRegisterSubmit", { name: name, email: email, password: password }, statusEl);
+    });
+
+    // Password reset isn't wired to Firebase yet on this build - flagged
+    // honestly rather than silently doing nothing.
+    document.getElementById("login-forgot").addEventListener("click", () => {
+      setStatus(document.getElementById("login-status"), "Password reset isn't available in this build yet.", true);
+    });
+
+    document.getElementById("login-google").addEventListener("click", () => {
+      var statusEl = document.getElementById("login-status");
+      setStatus(statusEl, "Opening Google sign-in...");
+      callUnity("ReceiveGoogleSignIn", { tab: "login" }, statusEl);
+    });
+    document.getElementById("register-google").addEventListener("click", () => {
+      var statusEl = document.getElementById("register-status");
+      setStatus(statusEl, "Opening Google sign-up...");
+      callUnity("ReceiveGoogleSignIn", { tab: "register" }, statusEl);
+    });
+
+    // ---------------------------------------------------------------------
+    // Called from C# (StartAuthBridge.cs) via EcoLearnUIPlugin.jslib
+    // ---------------------------------------------------------------------
+    window.EcoLearnUI = {
+      hideOverlay: function () {
+        mainPage.style.display = "none";
+        loginPage.style.display = "none";
+        navBar.classList.add("is-authed");
+      },
+      setStatus: function (isRegister, message) {
+        var el = document.getElementById(isRegister ? "register-status" : "login-status");
+        setStatus(el, message, !!message);
+      }
+    };
+  </script>
+</body>
+
+</html>

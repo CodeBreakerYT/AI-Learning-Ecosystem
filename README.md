@@ -1,134 +1,151 @@
-# AI-Learning-Ecosystem
+# AI Learning Ecosystem (Unity)
 
-A WebXR (WebGL VR) learning platform built with [Three.js](https://threejs.org/),
-[Vite](https://vitejs.dev/), and [Firebase](https://firebase.google.com/) (free tier)
-for auth + storage.
+A VR learning app covering Math, Physics, and Chemistry: a login screen, a
+subject/category picker, per-subject minigames each with an AI tutor teacher,
+and a skill-tracking "My Progress" screen. Built in Unity 6000.3.13f1 (URP,
+XR Interaction Toolkit) and intended for both a native Windows build and a
+WebXR/WebGL build.
 
-## Flow
+> This README describes the project as it actually is today. An earlier,
+> much more elaborate multi-phase plan (Firebase/Google login, a custom
+> HTML/CSS WebGL login template copied from a separate EcoLearn web app,
+> Gemini-backed NPC chat, a quest-driven forest "World" scene, twelve+
+> scenes) exists as design notes but was **not** what got built — the
+> simpler structure below is what's actually in the scenes and scripts.
 
-1. **Home** — marketing landing page.
-2. **Login / Register** — one page with a Login/Register toggle; both tabs support
-   email+password and "Continue with Google" (Firebase Auth). Use **admin / admin** on
-   the Login tab as a no-Firebase-required test login (see below).
-3. **VR Setup** (auth-gated) — pick your headset, then **Attach** to request a real
-   `immersive-vr` WebXR session via `navigator.xr`.
-4. Once attached, put on the headset: the VR room (floor + lit cube) is rendered, and
-   the thumbstick on either controller moves you around — controller models are drawn
-   live via `XRControllerModelFactory`.
+## Scene flow
 
-## Project structure
+`Assets/PlatformScenes/`:
 
-```
-scripts/
-  core/        renderer + WebXR session/controllers (xrManager.js), navigator.xr
-               session request (xrSession.js), thumbstick locomotion (locomotion.js),
-               router (router.js), Firebase init (firebase.js), auth state +
-               route guard (authState.js), shared renderer/scene handle (xrState.js)
-  mainPage/    landing page UI logic
-  login/       login + register UI logic (email/password + Google, toggled tabs)
-  contact/     contact form UI logic
-  vrSetup/     headset select + Attach (WebXR session request) UI logic
-assets/
-  ui/          HTML overlay styles, icons, logo, Google icon
-  models/      drop 3D models with animations here, one subfolder per page
-                (mainPage/, login/, contact/) — loaded via GLTFLoader later
-index.html     canvas + all UI overlay markup
-```
+- **`StartScene.unity`** — entry point (Build Settings index 0).
+  `StartSceneNav.cs` builds a small floating panel ("AI LEARNING ECOSYSTEM /
+  Choose where to go") with one button, **SUBJECTS**, that loads `Hub`. A
+  `ConvaiRuntimeSettings` component here (on the `Start Auth Bridge`
+  GameObject) holds your Convai **API key** plus one Convai **character ID**
+  per subject (Math/Physics/Chemistry) — see "One-time setup" below.
+- **`Hub.unity`** — the picker, and the only navigation hub. `HubBootstrap.cs`
+  builds a world-space sci-fi-styled canvas with three screens:
+  - **Choose a subject** — MATH / PHYSICS / CHEMISTRY cards (each shows a
+    personalized one-line blurb based on your actual adaptive level per
+    game), plus **MY PROGRESS** and **< BACK TO START**.
+  - **Category screen** (rebuilt per subject) — two minigames plus a
+    "Meet the Teacher" option that loads that subject's classroom scene.
+  - **Progress screen** — `SkillProfilePanel.cs`, see below.
+  There is no separate free-roam "World" scene in the current build —
+  `Assets/PlatformScenes/World/World.unity` exists on disk but is not
+  registered in Build Settings and nothing loads it.
+- **Minigame scenes**, one per category:
+  - Math: `Math/MathCannon.unity`, `Math/MathShootingRange.unity` (also
+    `Math/EquationEscapeRoom.unity`, `Math/GeometryBuilder.unity`,
+    `Math/SurfaceAreaVolume.unity` exist and are reachable via `HubBootstrap`
+    for their subjects even though "Math Cannon"/"Shooting Range" are the two
+    wired into the current category screen).
+  - Physics: `Physics/ProjectileLauncher.unity` (the archery/projectile
+    lesson), `Physics/NewtonsLaws.unity` (a ported scene with its own
+    simulation content, loaded directly rather than through the
+    IMinigame/DifficultyManager adaptive system), `Physics/NewtonsForceArena.unity`.
+  - Chemistry: `Chemistry/ForestChemistryMinigame.unity` ("Molecule
+    Builder"), `Chemistry/ChemicalReactionLab.unity`, `Chemistry/PeriodicTableHunt.unity`.
+  - Classrooms: `Classrooms/MathClassroom.unity`, `Classrooms/PhysicsClassroom.unity`,
+    `Classrooms/ChemistryClassroom.unity` — each spawns a Convai-driven
+    teacher via `MinigameTeacher.cs` who wanders the room.
+- Registered Build Settings order: `StartScene`, `Hub`, `EquationEscapeRoom`,
+  `MathCannon`, `GeometryBuilder`, `NewtonsLaws`, `ProjectileLauncher`,
+  `NewtonsForceArena`, `ForestChemistryMinigame`, `ChemicalReactionLab`,
+  `PeriodicTableHunt`, `MathClassroom`, `PhysicsClassroom`,
+  `ChemistryClassroom`, `MathShootingRange`, `SurfaceAreaVolume`.
 
-The floor, lighting, and demo cube live permanently in `scripts/core/xrManager.js`
-(not per-page) since that's the actual VR room you walk around in. Page modules only
-own the 2D HTML overlay shown before/around the headset experience — swap the cube for
-a `GLTFLoader` call against `assets/models/<page>/your-model.glb` once a real model with
-animations is ready.
+## Key systems
 
-## Requirements
+- **`Assets/HubWorld/CanvasUIHelpers.cs`** — shared runtime UI builder used
+  everywhere: procedurally generated sci-fi chamfered panels/buttons
+  (`CreateSciFiPanel`/`CreateSciFiButton`) plus the original EcoLearn-styled
+  `CreatePanel`/`CreateButton`. All in-VR UI is built this way at runtime
+  (once, then persisted as real saved scene objects — see below), since a
+  headset only ever renders the WebGL canvas, never a surrounding webpage.
+- **`[ExecuteAlways]` "build once, rediscover after" pattern** — `HubBootstrap`,
+  `SciFiProgressBar`, and most minigame bootstrap scripts check
+  `transform.Find("X") == null` in `Awake()`: build the UI/geometry the first
+  time, otherwise re-find the already-built child objects. This makes the
+  generated UI permanently visible and editable in the Scene view (not just
+  spawned at Play time), with a `Rebuild` Inspector button
+  (`Assets/HubWorld/Editor/MinigameRebuildEditors.cs`) to regenerate it after
+  a code change. Runtime kickoff logic (things that should only run in Play
+  mode) lives in `Start()` behind a `_runtimeStarted` guard, not in `Awake()`,
+  since `[ExecuteAlways]`'s `Awake()` can fire before `Application.isPlaying`
+  has actually settled during the edit→play transition.
+- **`Assets/HubWorld/ConvaiRuntimeSettings.cs`** + **`Teachers/MinigameTeacher.cs`** —
+  the AI tutor system. One Convai API key and three per-subject character IDs
+  are set once, in the Editor Inspector, on `StartScene`'s `ConvaiRuntimeSettings`
+  component (never hard-coded or committed as plaintext by an assistant).
+  `MinigameTeacher` (present in each minigame/classroom scene) reads the
+  override for its own subject by checking which `PlatformScenes/{Math,
+  Physics,Chemistry}/` folder the scene lives in, builds a full Convai NPC
+  stack (lip sync, head tracking, blinking, `ConvaiActionsHandler` with
+  Move To/Point/Dance actions, `DynamicInfoController` fed by
+  `ConvAIManager.UpdateGameContext` so the AI can answer "what do I do here?"
+  grounded in the live minigame state), and has her wander
+  (`TeacherWander.cs`) or optionally follow the player
+  (`TeacherFollowPlayer.cs`) on a small locally-baked NavMesh.
+- **`Assets/HubWorld/Learning/`** — `PlayerProgressManager` (per-concept
+  mastery tracking) and `GameManager.Difficulty` (per-subject, per-minigame
+  adaptive leveling), both `PlayerPrefs`-backed. `SkillProfilePanel.cs` is
+  the visible "My Progress" surface: a `SciFiProgressBar` node-meter per
+  minigame (current adaptive level out of 5) and a "Focus on: {concept}"
+  weak-spot callout, reachable from the Hub's subject screen.
+- **Archery / projectile physics lesson** (`Games/ArcheryProjectileGame.cs`,
+  `ArcheryBow.cs`) — fixed launch speed so the trigonometry has one unknown
+  (the launch angle); `BuildAngleHint()` shows the worked
+  `sin(2θ) = Rg/U²` calculation with both solution angles for the current
+  target distance; distances are tuned to keep both solutions in a forgiving
+  20–45° band. Spent arrows auto-destroy after 7 seconds
+  (`SpentArrowLifetime`) so used interactable colliders don't pile up and
+  block new shots. Ambient forest music plays via `WorldMusicDirector`.
+- **`Games/MathCannonGame.cs`** / **`MathShootingRangeGame.cs`** — the two
+  Math minigames wired into the Hub. `MathShootingRangeGame` uses a real
+  `XRSocketInteractor` holster (a sibling of the pistol stand, not a child of
+  it, so the holster's world position doesn't move once the pistol is
+  grabbed) and destroys bullets on any collision instead of a flat multi-
+  second timer, fixing a lag issue caused by `ContinuousDynamic` collision
+  bodies living far longer than needed.
+- **`SciFiProgressBar.cs`** — a node-based HUD meter (diamond nodes per
+  round, done/current/locked states, animated count-up percentage) used by
+  both minigame HUDs and `SkillProfilePanel`.
 
-- Node.js 18+
-- A WebXR-capable browser (Chrome/Edge on desktop with a VR headset connected, or the
-  Meta Quest Browser) to actually enter VR. Desktop browsers without a headset will
-  still render the scene in 2D and the Attach button will report VR as unsupported.
+## One-time setup (in the Unity Editor)
 
-## Firebase setup
+1. Open the project in Unity 6000.3.13f1 (or a later 6000.3.x). Let Package
+   Manager resolve packages and let assets reimport; accept any one-time
+   material/shader upgrade prompt.
+2. **Set your Convai API key and per-subject teacher character IDs.** Open
+   `StartScene.unity`, select the `Start Auth Bridge` GameObject, and fill in
+   `ConvaiRuntimeSettings`'s `Api Key`, `Math Teacher Character ID`,
+   `Physics Teacher Character ID`, and `Chemistry Teacher Character ID`
+   fields directly in the Inspector. These are intentionally blank in the
+   checked-in scene — paste your own values in locally; don't commit a real
+   key if this repo is ever made public (leave the fields blank before
+   committing, or keep this file out of version control).
+3. Enter Play mode from `StartScene` and click **SUBJECTS** to reach the Hub,
+   or open `Hub.unity` directly and press Play.
 
-1. Create a free project at [console.firebase.google.com](https://console.firebase.google.com).
-2. Enable **Authentication → Sign-in method → Email/Password** and **Google**.
-3. Create a **Firestore Database** (used to store each user's chosen headset).
-4. Copy `.env.example` to `.env` and fill in the values from your Firebase project
-   settings (Project settings → General → Your apps → SDK setup and configuration).
+## Known limitation: WebGL + Convai
 
-Without a configured `.env`, real Firebase login/register/Google sign-in will show a
-"Firebase isn't configured yet" error — but the dummy login below still works so you
-can test the whole VR flow immediately.
+Convai's runtime depends on `Grpc.Core`, which has no WebAssembly build.
+Only 2 files in this project currently guard Convai usage behind
+`#if !UNITY_WEBGL`; the rest (including `MinigameTeacher.cs` and the
+Convai component stack it builds) will fail to compile for the WebGL build
+target as-is. A real WebGL/Netlify deployment needs those `#if !UNITY_WEBGL`
+guards added across every file that references a Convai type — not yet
+done. **A Windows Standalone (.exe) build is unaffected** by this and is the
+currently-working way to test and share a build, since Convai's gRPC client
+compiles fine for desktop targets.
 
-## Test login (no Firebase required)
+## Notes
 
-```
-username: admin
-password: admin
-```
-
-Enter this on the Login page to bypass Firebase entirely and go straight to VR Setup.
-
-## What's actually persisted in Firebase
-
-- **Authentication → Users**: every email/password registration and every Google
-  sign-in creates a real Firebase Auth user (visible live in the console).
-- **Firestore `users/{uid}`**: profile doc with `email`, `provider`, `lastLogin`
-  (updated on every sign-in via `scripts/core/authState.js`) and `headset` (set once
-  you attach a headset on the VR Setup page).
-- **Firestore `loginLogs`**: one append-only row per sign-in (`uid`, `email`,
-  `provider`, `at`) — a real login history, not just a single "last seen" field.
-- **Session persistence**: the app waits for Firebase to restore an existing session
-  (`onAuthStateChanged`) before its first route check, so a signed-in user reopening
-  the site in a new tab lands on the real page, not bounced back to Login.
-- The offline `admin`/`admin` test login never touches Firebase (no network call, no
-  Firestore write) — it's purely a local bypass for testing the VR flow.
-
-`firestore.rules` (included in the repo) restricts each user to their own `users/{uid}`
-doc and only lets them *create* (never read/edit) `loginLogs` rows. Paste it into
-**Firestore Database → Rules** in the console and click **Publish** — this also avoids
-the default "test mode" rules expiring 30 days after project creation, which would
-otherwise silently start rejecting every write in production.
-
-## Develop
-
-```bash
-npm install
-npm run dev
-```
-
-WebXR requires a secure context (HTTPS) to enter VR on a physical device. The Vite dev
-server is plain HTTP, so for in-headset testing either:
-- use a tunnel (e.g. `npx vite --host` + a tool like ngrok), or
-- deploy a preview (see below) and open the deployed HTTPS URL on the headset.
-
-## Build & deploy
-
-```bash
-npm run build      # outputs static site to dist/
-npm run preview    # serve the production build locally
-```
-
-The repo includes `netlify.toml` (build command `npm run build`, publish dir `dist`) so
-it deploys to Netlify out of the box — connect the repo or run `netlify deploy`. Any
-static host (Vercel, GitHub Pages, Cloudflare Pages) works the same way since the build
-output is a plain static `dist/` folder with relative asset paths.
-
-### Avoiding deployment issues with Firebase
-
-`.env` is gitignored on purpose (it's not committed), which means **the deployed build
-won't have your Firebase keys unless you add them on the host too**. Two things to set
-up once, before the first deploy:
-
-1. **Add the env vars on your host.** In Netlify: Site settings → Environment variables
-   → add all six `VITE_FIREBASE_*` keys from your `.env`. Other hosts have an equivalent
-   "Environment variables" page. Without this, the deployed site silently falls back to
-   the "Firebase isn't configured" error path (the dummy `admin`/`admin` login still
-   works, but real auth won't).
-2. **Authorize the deployed domain in Firebase.** Firebase console → Authentication →
-   Settings → Authorized domains → add your Netlify/Vercel domain (e.g.
-   `your-site.netlify.app`). Without this, Google sign-in's popup fails with
-   `auth/unauthorized-domain` on the live site even though it works on `localhost`
-   (which is authorized by default).
-
-Both are one-time console steps — no code changes needed when you redeploy after.
+- `World.unity`, the "WORLD" navigation option, and the associated menu
+  buttons in `HubBootstrap`/`StartSceneNav` were intentionally removed from
+  the active flow — this app is subject-picking only now (Math / Physics /
+  Chemistry via the Hub), with no separate free-roam scene.
+- `robocopy` was used to copy this project from its working location,
+  excluding the regenerable `Library/` and `Temp/` folders (both are
+  Unity-generated caches, safe to delete and let Unity rebuild on next open).

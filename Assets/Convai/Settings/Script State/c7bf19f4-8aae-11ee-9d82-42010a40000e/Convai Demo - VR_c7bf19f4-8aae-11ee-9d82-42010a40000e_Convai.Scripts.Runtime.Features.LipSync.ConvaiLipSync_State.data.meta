@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 371fceddccbb4ad4890f7ae0c3311c47
+DefaultImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 235621
+  packageName: NPC AI Engine - Dialog, actions, voice and lipsync - Convai
+  packageVersion: 3.3.4
+  assetPath: Assets/Convai/Settings/Script State/c7bf19f4-8aae-11ee-9d82-42010a40000e/Convai
+    Demo - VR_c7bf19f4-8aae-11ee-9d82-42010a40000e_Convai.Scripts.Runtime.Features.LipSync.ConvaiLipSync_State.data
+  uploadId: 878110

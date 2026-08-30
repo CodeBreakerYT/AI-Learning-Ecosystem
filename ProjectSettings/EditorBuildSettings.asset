@@ -1,0 +1,66 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1045 &1
+EditorBuildSettings:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Scenes:
+  - enabled: 1
+    path: Assets/PlatformScenes/StartScene.unity
+    guid: b5edc21357f4448ba2900f151a368e95
+  - enabled: 1
+    path: Assets/PlatformScenes/Hub.unity
+    guid: d02f642838dd6524e9cb358a1fa674d1
+  - enabled: 1
+    path: Assets/PlatformScenes/Math/EquationEscapeRoom.unity
+    guid: 9a05e0895e6e41cdb82870943c1f4c71
+  - enabled: 1
+    path: Assets/PlatformScenes/Math/MathCannon.unity
+    guid: 7331ee8234cf491b9744543dca86206a
+  - enabled: 1
+    path: Assets/PlatformScenes/Math/GeometryBuilder.unity
+    guid: 8ac4007c09314cd89ad7b0f5e5f6bf5d
+  - enabled: 1
+    path: Assets/PlatformScenes/Physics/NewtonsLaws.unity
+    guid: 90a85d628775c0f46bf6ede47549b259
+  - enabled: 1
+    path: Assets/PlatformScenes/Physics/ProjectileLauncher.unity
+    guid: 05056aa6578b447e86126e0520829eff
+  - enabled: 1
+    path: Assets/PlatformScenes/Physics/NewtonsForceArena.unity
+    guid: 1f4755fecd0e4ed1bf698cd77e9b3900
+  - enabled: 1
+    path: Assets/PlatformScenes/Chemistry/ForestChemistryMinigame.unity
+    guid: 9d0d9a8d266e03643a0daef7a063bc54
+  - enabled: 1
+    path: Assets/PlatformScenes/Chemistry/ChemicalReactionLab.unity
+    guid: 2bbcfbd1d4044f23a564ccbb8e242263
+  - enabled: 1
+    path: Assets/PlatformScenes/Chemistry/PeriodicTableHunt.unity
+    guid: a7efed344c9949d1bda0131cf403f1e1
+  - enabled: 1
+    path: Assets/PlatformScenes/Classrooms/MathClassroom.unity
+    guid: 01e065b1a59e3d44ea59f4382e416ceb
+  - enabled: 1
+    path: Assets/PlatformScenes/Classrooms/PhysicsClassroom.unity
+    guid: 2cbcc8b0de289a541aa321a26dccd4b7
+  - enabled: 1
+    path: Assets/PlatformScenes/Classrooms/ChemistryClassroom.unity
+    guid: 5cb4d083a910da84e9f9c214a89e304b
+  - enabled: 1
+    path: Assets/PlatformScenes/Math/MathShootingRange.unity
+    guid: 5efa1a7223bfb1e4883e75e9dcab6a72
+  - enabled: 1
+    path: Assets/PlatformScenes/Math/SurfaceAreaVolume.unity
+    guid: c7ceb52bce1d78d4080e3876a3b387e2
+  m_configObjects:
+    Unity.XR.Oculus.Settings: {fileID: 11400000, guid: bfa1182bd221b4ca89619141f66f1260, type: 2}
+    Unity.XR.WindowsMR.Settings: {fileID: 11400000, guid: dc5a169419fa04987b057f65238cf3ba, type: 2}
+    UnityEditor.XR.ARCore.ARCoreSettings: {fileID: 11400000, guid: 9bec1ce6a03ccba4b9a8215241b32e63, type: 2}
+    UnityEditor.XR.ARKit.ARKitSettings: {fileID: 11400000, guid: a49cadc1a815591479693b955ccf08c1, type: 2}
+    WebXR.Settings: {fileID: 11400000, guid: b865e6809bb02da45bf00cd9edefc88f, type: 2}
+    com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 985fdffee33a5944396199c6b7145dd4, type: 3}
+    com.unity.xr.arfoundation.simulation_settings: {fileID: 11400000, guid: 908d62378b8205449861e5838a18a596, type: 2}
+    com.unity.xr.management.loader_settings: {fileID: 11400000, guid: 4b3de149e50ea0c4f8ad04c79b9f12ec, type: 2}
+    com.unity.xr.openxr.settings4: {fileID: 11400000, guid: a2c2874e81b21e44eb07482d60ada462, type: 2}
+  m_UseUCBPForAssetBundles: 0

@@ -1,0 +1,26 @@
+fileFormatVersion: 2
+guid: ca920ec2386ff3d4ca1448818f6b2484
+AudioImporter:
+  serializedVersion: 6
+  defaultSettings:
+    loadType: 1
+    sampleRateSetting: 0
+    sampleRateOverride: 0
+    compressionFormat: 1
+    quality: .5
+    conversionMode: 0
+  platformSettingOverrides: {}
+  forceToMono: 0
+  preloadAudioData: 1
+  loadInBackground: 0
+  3D: 0
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 92152
+  packageName: 3D Scifi Kit Starter Kit
+  packageVersion: 3.0
+  assetPath: Assets/Creepy_Cat/3D Scifi Kit Starter Kit_HD/Sounds/Ambiant_Loop.wav
+  uploadId: 891888
